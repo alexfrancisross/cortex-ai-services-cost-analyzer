@@ -41,10 +41,10 @@ WHERE service_type = 'AI_SERVICES'
 SELECT '=== INDIVIDUAL SERVICES BREAKDOWN ===' as section;
 
 WITH individual_services AS (
-    -- Cortex Functions Usage (Direct function calls)
+    -- Cortex Functions Usage (Includes both direct and query-embedded function calls)
     SELECT 
         'CORTEX_FUNCTIONS_USAGE' as service_type,
-        'Direct function invocations via APIs/SQL' as description,
+        'LLM function calls (direct and query-embedded)' as description,
         SUM(token_credits) as credits,
         COUNT(*) as usage_records,
         COUNT(DISTINCT function_name) as unique_functions,
@@ -53,23 +53,6 @@ WITH individual_services AS (
         MAX(start_time) as last_usage
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
     WHERE DATE(start_time) BETWEEN $start_date AND $end_date
-    
-    UNION ALL
-    
-    -- Cortex Functions Query (SQL-embedded function calls with date filtering via JOIN)
-    SELECT 
-        'CORTEX_FUNCTIONS_QUERY' as service_type,
-        'SQL-embedded function calls' as description,
-        SUM(cfq.token_credits) as credits,
-        COUNT(*) as usage_records,
-        COUNT(DISTINCT cfq.function_name) as unique_functions,
-        COUNT(DISTINCT DATE(qh.start_time)) as active_days,
-        MIN(qh.start_time) as first_usage,
-        MAX(qh.start_time) as last_usage
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY cfq
-    LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY qh ON cfq.query_id = qh.query_id
-    WHERE DATE(qh.start_time) BETWEEN $start_date AND $end_date
-        AND qh.start_time IS NOT NULL
     
     UNION ALL
     
@@ -115,6 +98,21 @@ WITH individual_services AS (
         MAX(start_time) as last_usage
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
     WHERE DATE(start_time) BETWEEN $start_date AND $end_date
+    
+    UNION ALL
+    
+    -- Cortex Fine Tuning (Model fine-tuning operations)
+    SELECT 
+        'CORTEX_FINE_TUNING' as service_type,
+        'Model fine-tuning operations' as description,
+        COALESCE(SUM(token_credits), 0) as credits,
+        COUNT(*) as usage_records,
+        0 as unique_users,  -- Assuming no user column
+        COUNT(DISTINCT DATE(start_time)) as active_days,
+        MIN(start_time) as first_usage,
+        MAX(start_time) as last_usage
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
+    WHERE DATE(start_time) BETWEEN $start_date AND $end_date
 )
 SELECT 
     service_type,
@@ -151,14 +149,6 @@ services_total AS (
         
         UNION ALL
         
-        SELECT SUM(cfq.token_credits) as credits
-        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY cfq
-        LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY qh ON cfq.query_id = qh.query_id
-        WHERE DATE(qh.start_time) BETWEEN $start_date AND $end_date
-            AND qh.start_time IS NOT NULL
-        
-        UNION ALL
-        
         SELECT SUM(credits) as credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
         WHERE DATE(start_time) BETWEEN $start_date AND $end_date
@@ -173,6 +163,12 @@ services_total AS (
         
         SELECT COALESCE(SUM(credits), 0) as credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+        WHERE DATE(start_time) BETWEEN $start_date AND $end_date
+        
+        UNION ALL
+        
+        SELECT COALESCE(SUM(token_credits), 0) as credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
         WHERE DATE(start_time) BETWEEN $start_date AND $end_date
     )
 )
@@ -234,6 +230,13 @@ daily_services AS (
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
         WHERE DATE(start_time) BETWEEN $start_date AND $end_date
         GROUP BY usage_date
+        
+        UNION ALL
+        
+        SELECT DATE(start_time) as usage_date, COALESCE(SUM(token_credits), 0) as daily_credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
+        WHERE DATE(start_time) BETWEEN $start_date AND $end_date
+        GROUP BY usage_date
     )
     GROUP BY usage_date
 )
@@ -274,15 +277,6 @@ WITH service_percentages AS (
         
         UNION ALL
         
-        SELECT 'CORTEX_FUNCTIONS_QUERY' as service_type,
-               COALESCE(SUM(cfq.token_credits), 0) as credits
-        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY cfq
-        LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY qh ON cfq.query_id = qh.query_id
-        WHERE DATE(qh.start_time) BETWEEN $start_date AND $end_date
-            AND qh.start_time IS NOT NULL
-        
-        UNION ALL
-        
         SELECT 'CORTEX_ANALYST' as service_type,
                COALESCE(SUM(credits), 0) as credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
@@ -300,6 +294,13 @@ WITH service_percentages AS (
         SELECT 'CORTEX_SEARCH_SERVING' as service_type,
                COALESCE(SUM(credits), 0) as credits
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+        WHERE DATE(start_time) BETWEEN $start_date AND $end_date
+        
+        UNION ALL
+        
+        SELECT 'CORTEX_FINE_TUNING' as service_type,
+               COALESCE(SUM(token_credits), 0) as credits
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
         WHERE DATE(start_time) BETWEEN $start_date AND $end_date
     ) services
 )

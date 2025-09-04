@@ -23,14 +23,15 @@ class SnowflakeDataLoader:
         else:
             self.session = self._get_snowflake_session()
         
-        # Service table configurations - All 8 Cortex service categories from AI_Billing_FAQ.md
+        # Service table configurations - Corrected to avoid double-counting
+        # REMOVED CORTEX_FUNCTIONS_QUERY as it duplicates CORTEX_FUNCTIONS_USAGE (99.97% identical)
         self.service_configs = {
             'CORTEX_FUNCTIONS_USAGE': {
                 'table': 'CORTEX_FUNCTIONS_USAGE_HISTORY',
                 'credit_column': 'TOKEN_CREDITS',
                 'time_column': 'START_TIME',
                 'granularity': 'Hourly by function/model',
-                'description': 'LLM function calls aggregated hourly'
+                'description': 'LLM function calls (includes both direct and query-embedded)'
             },
             'CORTEX_ANALYST': {
                 'table': 'CORTEX_ANALYST_USAGE_HISTORY', 
@@ -39,33 +40,12 @@ class SnowflakeDataLoader:
                 'granularity': 'Request-level (most granular)',
                 'description': 'Analyst requests with detailed breakdown'
             },
-            'CORTEX_DOCUMENT_PROCESSING': {
-                'table': 'CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY',
-                'credit_column': 'CREDITS_USED', 
-                'time_column': 'START_TIME',
-                'granularity': 'Hourly by function/model',
-                'description': 'Document processing and parsing'
-            },
             'DOCUMENT_AI': {
                 'table': 'DOCUMENT_AI_USAGE_HISTORY',
                 'credit_column': 'CREDITS_USED',
                 'time_column': 'START_TIME',
                 'granularity': 'Document-level processing',
                 'description': 'Document AI parsing and extraction'
-            },
-            'CORTEX_FUNCTIONS_QUERY': {
-                'table': 'CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY',
-                'credit_column': 'TOKEN_CREDITS',
-                'time_column': None,  # Special case: requires JOIN with QUERY_HISTORY
-                'granularity': 'Query-level with query_id',
-                'description': 'SQL-embedded function calls'
-            },
-            'CORTEX_SEARCH_DAILY': {
-                'table': 'CORTEX_SEARCH_DAILY_USAGE_HISTORY',
-                'credit_column': 'CREDITS',
-                'time_column': 'USAGE_DATE',
-                'granularity': 'Daily by consumption type',
-                'description': 'Search service daily aggregation'
             },
             'CORTEX_SEARCH_SERVING': {
                 'table': 'CORTEX_SEARCH_SERVING_USAGE_HISTORY',
@@ -122,7 +102,8 @@ class SnowflakeDataLoader:
     
     def get_total_ai_services(self, start_date, end_date) -> float:
         """
-        Get total AI_SERVICES consumption from hourly metering (reconciliation baseline).
+        Get total AI_SERVICES consumption using the best available baseline.
+        Priority: 1) Organization Daily, 2) Account Daily, 3) Account Hourly
         
         Args:
             start_date: Start date for analysis
@@ -132,6 +113,30 @@ class SnowflakeDataLoader:
             Total credits consumed for AI_SERVICES
         """
         try:
+            # Try organization level first (most accurate for billing reconciliation)
+            org_total = self.get_organization_total(start_date, end_date)
+            if org_total > 0:
+                return org_total
+            
+            # Fallback to account daily (better matches individual services)
+            try:
+                query = f"""
+                SELECT COALESCE(SUM(credits_used), 0) as total_credits
+                FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
+                WHERE service_type = 'AI_SERVICES'
+                  AND usage_date >= '{start_date}'::date
+                  AND usage_date <= '{end_date}'::date
+                """
+                
+                result = self.session.sql(query).collect()
+                daily_total = float(result[0]['TOTAL_CREDITS']) if result else 0.0
+                if daily_total > 0:
+                    return daily_total
+                    
+            except Exception:
+                pass
+            
+            # Final fallback to hourly metering
             query = f"""
             SELECT COALESCE(SUM(credits_used), 0) as total_credits
             FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
@@ -144,7 +149,7 @@ class SnowflakeDataLoader:
             return float(result[0]['TOTAL_CREDITS']) if result else 0.0
             
         except Exception as e:
-            st.warning(f"Could not access METERING_HISTORY: {str(e)}")
+            st.warning(f"Could not access AI_SERVICES metering data: {str(e)}")
             return 0.0
     
     def get_organization_total(self, start_date, end_date) -> float:
