@@ -1,0 +1,17 @@
+# Development Environment Configuration
+database: "ANALYTICS_DEV"
+schema: "CORTEX_APPS_DEV"
+app_name: "CORTEX_AI_COST_ANALYZER_DEV"
+warehouse: "COMPUTE_WH"
+
+# Performance settings for dev
+query_timeout: 60
+cache_ttl: 180  # 3 minutes for faster iteration
+
+# Debug settings
+debug: true
+log_level: "DEBUG"
+
+# Data freshness thresholds (more lenient for dev)
+freshness_warning_hours: 12
+freshness_critical_hours: 24

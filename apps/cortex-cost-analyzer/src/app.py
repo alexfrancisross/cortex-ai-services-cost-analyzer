@@ -7,8 +7,10 @@ import sys
 import os
 import toml
 
-# Add current directory to Python path for module imports
+# Add current directory and shared libraries to Python path for module imports
 sys.path.append(os.path.dirname(__file__))
+# Add shared libraries path for monorepo structure
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'libs', 'cortex-analytics', 'src'))
 
 # Environment detection and session setup
 @st.cache_resource
@@ -88,7 +90,7 @@ def _get_standalone_session():
         """)
         st.stop()
 
-# Import custom modules
+# Import custom modules from shared library
 try:
     from data_layer import SnowflakeDataLoader
     from reconciliation import ReconciliationEngine
@@ -97,6 +99,7 @@ try:
 except ImportError as e:
     st.error(f"Module import error: {e}")
     st.info("Please ensure all required modules are deployed with the application.")
+    st.info("In monorepo structure, ensure libs/cortex-analytics/src is in artifacts.")
     st.stop()
 
 @st.cache_data
