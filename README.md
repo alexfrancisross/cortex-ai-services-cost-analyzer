@@ -1,204 +1,276 @@
-# Cortex AI Services Cost Analyzer - Monorepo
+# Cortex AI Services Cost Analyzer - Official Snowflake Monorepo
 
-A production-ready monorepo for comprehensive Snowflake Cortex AI Services cost analysis and reconciliation with 99.98% accuracy.
+A production-ready monorepo following official Snowflake best practices for comprehensive Cortex AI Services cost analysis and reconciliation with 99.98% accuracy.
 
-## 🏗️ Monorepo Structure
+## 🏗️ Official Snowflake Monorepo Structure
+
+Following the recommended Snowflake monorepo pattern:
 
 ```
 cortex-consumption/
-├── apps/                                    # Applications
-│   └── cortex-cost-analyzer/               # Main Streamlit application
-│       ├── src/
-│       │   ├── app.py                      # Main application entry point
-│       │   └── components/                 # UI components (future)
-│       ├── config/                         # App-specific configuration
-│       ├── environment.yml                 # Conda environment
-│       └── snowflake.yml                   # Snowflake CLI configuration
-├── libs/                                    # Shared libraries
-│   └── cortex-analytics/                   # Core analytics library
-│       ├── src/
-│       │   ├── __init__.py                 # Package initialization
-│       │   ├── data_layer.py               # Snowflake data access layer
-│       │   ├── reconciliation.py           # 3-tier reconciliation engine
-│       │   ├── visualizations.py           # Plotly visualization components
-│       │   └── utils.py                    # Helper functions and constants
-│       ├── setup.py                        # Package setup
-│       └── requirements.txt                # Library dependencies
-├── docs/                                    # Documentation
-│   ├── README.md                           # Application documentation
-│   ├── CLAUDE.md                           # Claude Code guidance
-│   ├── architecture/                       # Architecture documentation
-│   ├── deployment/                         # Deployment guides
-│   └── performance/                        # Performance optimization
+├── apps/                                    # Streamlit Applications
+│   └── cortex-cost-analyzer/               # Main cost analyzer app
+│       ├── app.py                          # Streamlit application entry point
+│       ├── environment.yml                 # Conda environment configuration
+│       └── setup.sql                       # Database setup and permissions
+├── shared/                                 # Shared code across applications
+│   ├── utils/                             # Utility functions
+│   │   ├── __init__.py                    # Package initialization
+│   │   └── data_helpers.py                # Data formatting and helper functions
+│   ├── analytics/                         # Analytics and data processing
+│   │   ├── __init__.py                    # Package initialization  
+│   │   ├── data_layer.py                  # Snowflake data access layer
+│   │   └── reconciliation.py              # 3-tier reconciliation engine
+│   └── components/                        # Reusable UI components
+│       ├── __init__.py                    # Package initialization
+│       └── visualizations.py              # Plotly chart components
+├── docs/                                   # Documentation
 ├── config/                                 # Environment configurations
-│   └── environments/
-│       ├── dev.yml                         # Development settings
-│       └── prod.yml                        # Production settings
-├── scripts/                                # Automation scripts
-│   ├── deploy.sh                           # Deployment automation
-│   └── maintenance/                        # Maintenance scripts
+├── scripts/                                # Deployment and maintenance scripts
 ├── tests/                                  # Test suites
-│   ├── unit/                              # Unit tests
-│   └── integration/                       # Integration tests
-└── monorepo.yml                           # Monorepo configuration
-
+├── snowflake.yml                          # Root Snowflake CLI configuration
+├── .gitignore                             # Git ignore patterns
+└── README.md                              # This file
 ```
 
 ## 🚀 Quick Start
 
-### Using Snowflake CLI (Recommended)
+### Prerequisites
+- Snowflake CLI installed: `pip install snowflake-cli-labs`
+- Snowflake account with ACCOUNT_USAGE access
+- Configured Snowflake connection
+
+### Deploy Single Application
 
 ```bash
-# Navigate to application directory
-cd apps/cortex-cost-analyzer
+# From project root
+snow streamlit deploy --name cortex_cost_analyzer
 
-# Deploy to development
-../../scripts/deploy.sh dev
-
-# Deploy to production  
-../../scripts/deploy.sh prod
+# Or use deployment script  
+./scripts/deploy.sh dev
 ```
 
 ### Manual Deployment
 
 ```bash
-cd apps/cortex-cost-analyzer
-snow streamlit deploy --replace
+# Navigate to project root
+cd cortex-consumption
+
+# Deploy using Snowflake CLI
+snow streamlit deploy \
+  --name cortex_cost_analyzer \
+  --main-file apps/cortex-cost-analyzer/app.py \
+  --root-location .
 ```
 
 ## 📊 Applications
 
 ### Cortex Cost Analyzer
 - **Path**: `apps/cortex-cost-analyzer/`
-- **Type**: Streamlit in Snowflake application
 - **Purpose**: Interactive dashboard for AI services cost analysis and reconciliation
 
 **Key Features:**
 - 99.98% reconciliation accuracy across 6 Cortex service tables
-- Real-time cost analysis and trend monitoring
+- Real-time cost analysis with 3-tier validation methodology
 - Executive dashboard with export capabilities
-- 3-tier validation methodology
+- Performance-optimized with caching and query optimization
 
 ## 📚 Shared Libraries
 
-### Cortex Analytics Library
-- **Path**: `libs/cortex-analytics/`
-- **Type**: Python package
-- **Purpose**: Shared components for data analysis and visualization
+### Utils (`shared/utils/`)
+Common utility functions for data formatting, status indicators, and calculations.
+
+**Key Functions:**
+- `format_credits()` - Credit amount formatting
+- `get_status_color()` - Status color mapping
+- `calculate_percentage_change()` - Period-over-period analysis
+
+### Analytics (`shared/analytics/`)
+Core data processing and analysis components.
 
 **Components:**
-- `SnowflakeDataLoader`: Universal data access layer
-- `ReconciliationEngine`: 3-tier reconciliation implementation
-- `CortexVisualizer`: Plotly visualization components
-- `utils`: Helper functions and formatting utilities
+- `SnowflakeDataLoader` - Universal data access layer for ACCOUNT_USAGE queries
+- `ReconciliationEngine` - 3-tier reconciliation implementation
+
+### Components (`shared/components/`)
+Reusable Streamlit UI components and visualizations.
+
+**Components:**
+- `CortexVisualizer` - Plotly chart components for dashboards
 
 ## ⚙️ Configuration Management
 
-### Environment-Specific Settings
-- **Development**: `config/environments/dev.yml`
-- **Production**: `config/environments/prod.yml`
+### Root Configuration (`snowflake.yml`)
+Central deployment configuration for all applications in the monorepo.
 
-### Application Configuration
-- **Snowflake CLI**: `apps/cortex-cost-analyzer/snowflake.yml`
-- **Dependencies**: `apps/cortex-cost-analyzer/environment.yml`
-- **Library Dependencies**: `libs/cortex-analytics/requirements.txt`
+### Environment Configuration (`apps/cortex-cost-analyzer/environment.yml`)
+Conda environment specification with required packages:
+- streamlit, pandas, numpy, plotly
+- snowflake-snowpark-python
+
+### Database Setup (`apps/cortex-cost-analyzer/setup.sql`)
+SQL scripts for:
+- Database and schema creation
+- Required permissions for ACCOUNT_USAGE access
+- Stage setup for application deployment
 
 ## 🔧 Development Workflow
 
-### Local Development
+### Adding Shared Code
 ```bash
-# Install shared library in development mode
-cd libs/cortex-analytics
-pip install -e .
+# Add utility functions
+echo "def new_helper():" >> shared/utils/data_helpers.py
 
-# Run tests
-cd ../../
-python -m pytest tests/
+# Add analytics components  
+echo "class NewAnalyzer:" >> shared/analytics/new_module.py
 
-# Validate configuration
-cd apps/cortex-cost-analyzer
-snow project validate
+# Update package imports
+echo "from .new_module import NewAnalyzer" >> shared/analytics/__init__.py
 ```
 
-### Adding New Features
-1. **Shared Logic**: Add to `libs/cortex-analytics/src/`
-2. **UI Components**: Add to `apps/cortex-cost-analyzer/src/components/`
-3. **Tests**: Add to `tests/unit/` or `tests/integration/`
-4. **Documentation**: Update relevant docs in `docs/`
+### Testing Applications
+```bash
+# Run structure validation
+python -c "
+import sys; sys.path.insert(0, '.');
+from shared.analytics import SnowflakeDataLoader;
+print('✅ Imports working')
+"
+
+# Deploy to development
+./scripts/deploy.sh dev --validate-only
+```
+
+### Adding New Applications
+```bash
+# Create new app directory
+mkdir apps/new-app
+
+# Create app files
+touch apps/new-app/app.py
+touch apps/new-app/environment.yml  
+touch apps/new-app/setup.sql
+
+# Update root snowflake.yml to include new app
+```
 
 ## 📈 Performance Optimizations
 
 The monorepo includes comprehensive performance optimizations:
 
 - **Cached Session Management**: 50-70% faster page loads
-- **Query Result Caching**: 80-90% faster cached operations
+- **Query Result Caching**: 80-90% faster cached operations  
 - **Optimized SQL Queries**: Improved partition pruning and CTEs
 - **Component Initialization Caching**: 30-40% faster interactions
 
-## 🛠️ Architecture Benefits
+## 🛠️ Deployment Best Practices
 
-### Monorepo Advantages
-1. **Code Reusability**: Shared libraries across multiple applications
-2. **Consistent Dependencies**: Centralized dependency management  
-3. **Coordinated Releases**: Deploy multiple components together
-4. **Simplified CI/CD**: Single repository for all components
-5. **Cross-Application Refactoring**: Safe refactoring across boundaries
+### Using Snowflake CLI
+The recommended deployment method using `snowcli`:
 
-### Scalability
-- **New Applications**: Easy to add under `apps/`
-- **Shared Components**: Reusable libraries under `libs/`
-- **Environment Management**: Consistent configuration patterns
-- **Testing Strategy**: Comprehensive test coverage
-
-## 📋 Deployment Environments
-
-### Development
-- **Database**: `ANALYTICS_DEV`
-- **Schema**: `CORTEX_APPS_DEV`
-- **App**: `CORTEX_AI_COST_ANALYZER_DEV`
-
-### Production  
-- **Database**: `ANALYTICS`
-- **Schema**: `CORTEX_APPS`
-- **App**: `CORTEX_AI_COST_ANALYZER`
-
-## 🔍 Monitoring and Validation
-
-### Health Checks
 ```bash
-# Validate deployment
-./scripts/deploy.sh --validate-only
+# Deploy specific application
+snow streamlit deploy \
+  --name cortex_cost_analyzer \
+  --main-file apps/cortex-cost-analyzer/app.py \
+  --additional-source-files shared/
 
-# Run comprehensive tests
-python -m pytest tests/ -v
+# Deploy with environment
+snow streamlit deploy \
+  --name cortex_cost_analyzer \
+  --env production
+```
+
+### Shared Code Deployment
+Shared modules are automatically included via the `artifacts` section in `snowflake.yml`:
+```yaml
+artifacts:
+  - "apps/cortex-cost-analyzer/app.py"
+  - "apps/cortex-cost-analyzer/environment.yml" 
+  - "shared/"
+```
+
+## 📋 Required Snowflake Permissions
+
+Execute the setup.sql script to create the dedicated role and grant permissions:
+
+```sql
+-- Creates dedicated role: CORTEX_COST_ANALYZER_ROLE
+CREATE ROLE IF NOT EXISTS CORTEX_COST_ANALYZER_ROLE;
+
+-- Grants minimal required permissions for cost analysis
+GRANT USAGE ON DATABASE SNOWFLAKE TO ROLE CORTEX_COST_ANALYZER_ROLE;
+GRANT USAGE ON SCHEMA SNOWFLAKE.ACCOUNT_USAGE TO ROLE CORTEX_COST_ANALYZER_ROLE;
+GRANT SELECT ON SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY TO ROLE CORTEX_COST_ANALYZER_ROLE;
+-- ... (see setup.sql for complete permissions)
+
+-- Grant role to users who need access
+GRANT ROLE CORTEX_COST_ANALYZER_ROLE TO USER <username>;
+```
+
+**Security Benefits:**
+- Dedicated role with minimal required permissions
+- No use of PUBLIC role (security best practice)
+- Granular access control for specific users/groups
+- Follows principle of least privilege
+
+## 🔍 Troubleshooting
+
+### Common Issues
+
+**Import Errors**
+- Ensure `shared/` directory is in deployment artifacts
+- Verify `__init__.py` files exist in shared modules
+- Check Python path configuration in app.py
+
+**Deployment Failures**  
+- Run `snow streamlit validate` to check configuration
+- Verify required permissions with setup.sql
+- Check Snowflake CLI connection: `snow connection test`
+
+**Performance Issues**
+- Enable query caching with TTL settings
+- Use optimized reconciliation methods
+- Check warehouse size and auto-suspend settings
+
+### Debug Commands
+```bash
+# Validate project structure
+snow streamlit validate --name cortex_cost_analyzer
 
 # Check application logs
 snow streamlit logs cortex_cost_analyzer --lines 50
+
+# Test shared module imports
+python -c "import shared.analytics; print('✅ Analytics module loaded')"
 ```
 
-### Performance Metrics
-- Initial page load: <2 seconds (target)
-- Data refresh: <1 second (cached)
-- Reconciliation accuracy: >99.5%
-- Concurrent users: 20+ supported
+## 📊 Architecture Benefits
 
-## 📞 Support
+### Monorepo Advantages
+1. **Code Reusability** - Shared libraries prevent duplication across apps
+2. **Consistent Dependencies** - Centralized package management
+3. **Coordinated Releases** - Deploy multiple components together  
+4. **Simplified CI/CD** - Single repository for all components
+5. **Cross-Application Refactoring** - Safe changes across app boundaries
 
-### Documentation Structure
-- **Architecture**: `docs/architecture/`
-- **Deployment**: `docs/deployment/`  
-- **Performance**: `docs/performance/`
-- **API Reference**: Auto-generated from code
+### Snowflake-Specific Benefits
+1. **Optimized Deployment** - Native Snowflake CLI integration
+2. **Efficient Artifact Management** - Shared code deployed once
+3. **Database Setup Automation** - SQL scripts for repeatable setup
+4. **Environment Consistency** - Standardized conda environments
 
-### Getting Help
-1. Check relevant documentation in `docs/`
-2. Review application logs via Snowflake CLI
-3. Run validation scripts in `scripts/`
-4. Contact Snowflake Professional Services
+## 📈 Expected Results
+
+After deployment:
+- **Reconciliation Accuracy**: >99.5% between hourly and granular services
+- **Performance**: <2 second initial load, <500ms cached interactions
+- **Data Freshness**: <3 hours for active accounts
+- **Concurrent Users**: 20+ simultaneous users supported
 
 ---
 
 **Version**: 1.0.0  
-**Architecture**: Monorepo with shared libraries  
+**Architecture**: Official Snowflake Monorepo Pattern  
 **Compatibility**: All Snowflake accounts with ACCOUNT_USAGE access  
-**Last Updated**: Clean monorepo structure implementation
+**CLI Version**: snowflake-cli-labs>=2.0.0

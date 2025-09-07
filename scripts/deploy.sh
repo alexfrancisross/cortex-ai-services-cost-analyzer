@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-# Configuration - Updated for monorepo structure
+# Configuration - Updated for official Snowflake monorepo structure
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${PROJECT_ROOT}/apps/cortex-cost-analyzer"
 APP_NAME="cortex_cost_analyzer"
@@ -88,15 +88,15 @@ validate_prerequisites() {
         exit 1
     fi
     
-    # Check if we're in the right directory (monorepo structure)
-    if [[ ! -f "$APP_DIR/snowflake.yml" ]]; then
-        log_error "snowflake.yml not found in $APP_DIR. Please check monorepo structure."
+    # Check if we're in the right directory (Snowflake monorepo structure)
+    if [[ ! -f "$PROJECT_ROOT/snowflake.yml" ]]; then
+        log_error "snowflake.yml not found in project root. Please check monorepo structure."
         exit 1
     fi
     
     # Validate project configuration
     log_info "Validating project configuration..."
-    cd "$APP_DIR"
+    cd "$PROJECT_ROOT"
     
     if ! snow project validate; then
         log_error "Project validation failed. Please check snowflake.yml configuration."
@@ -175,7 +175,7 @@ deploy_app() {
     
     log_info "Deploying Cortex Cost Analyzer to environment: $environment"
     
-    cd "$APP_DIR"
+    cd "$PROJECT_ROOT"
     
     # Validate before deployment
     if ! snow streamlit validate --connection "$connection"; then

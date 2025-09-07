@@ -1,16 +1,9 @@
-# Streamlit in Snowflake Environment Configuration
-# Based on Snowflake Labs examples: https://github.com/Snowflake-Labs/snowflake-demo-streamlit
-
-name: cortex_analyzer_env
+name: cortex_cost_analyzer
 channels:
   - snowflake
-  - conda-forge
-  - nodefaults
 dependencies:
-  - pandas
-  - numpy
-  - plotly
-  - streamlit
-  - requests
-  - toml
-  - cryptography
+  - streamlit>=1.28.0
+  - pandas>=2.0.0
+  - numpy>=1.24.0
+  - plotly>=5.15.0
+  - snowflake-snowpark-python>=1.9.0
