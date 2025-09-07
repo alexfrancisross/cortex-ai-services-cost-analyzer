@@ -95,3 +95,4 @@ cp -r archive/scripts .
 ```
 
 The archive preserves the complete development history and tooling while keeping the main project clean and focused on the essential application files.
+

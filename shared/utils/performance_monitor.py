@@ -606,3 +606,4 @@ def measure_memory(operation_name: str):
             'delta': memory_delta,
             'timestamp': datetime.now().isoformat()
         })
+
