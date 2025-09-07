@@ -203,7 +203,7 @@ def main():
     # Date inputs
     start_date = st.sidebar.date_input(
         "Start Date",
-        value=st.session_state.get('date_range_start', datetime.now().date() - timedelta(days=30)),
+        value=st.session_state.get('date_range_start', datetime.now().date() - timedelta(days=90)),
         max_value=datetime.now().date()
     )
     
