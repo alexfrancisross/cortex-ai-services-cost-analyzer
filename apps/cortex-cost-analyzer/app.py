@@ -32,14 +32,21 @@ def get_snowflake_session():
     Cached Snowflake session to avoid re-authentication on every page load.
     Get Snowflake session - either from SiS (get_active_session) or standalone (connector)
     """
+    # Initialize deployment mode as Unknown
+    st.session_state['deployment_mode'] = 'Unknown'
+    
     try:
         # Try to get active session first (SiS environment)
         from snowflake.snowpark.context import get_active_session
         session = get_active_session()
-        # Only set mode to SiS if we successfully got the session
+        # Test the session with a simple query to ensure it's working
+        session.sql("SELECT CURRENT_VERSION()").collect()
+        # Only set mode to SiS if we successfully got and tested the session
         st.session_state['deployment_mode'] = 'SiS'
         return session
     except Exception as e:
+        # Log the SiS attempt failure for debugging
+        print(f"SiS session attempt failed: {str(e)}")
         # Fallback to standalone mode with key-pair authentication
         return _get_standalone_session()
 
@@ -56,6 +63,7 @@ def _get_standalone_session():
         # Load configuration from config.toml
         config_path = os.path.expanduser("~/.snowflake/config.toml")
         if not os.path.exists(config_path):
+            st.session_state['deployment_mode'] = 'Configuration Error'
             st.error(f"Configuration file not found: {config_path}")
             st.stop()
         
@@ -91,23 +99,30 @@ def _get_standalone_session():
             'role': conn_config['role']
         }).create()
         
-        # Only set mode to Standalone if we successfully created the session
+        # Test the session with a simple query to ensure it's working
+        session.sql("SELECT CURRENT_VERSION()").collect()
+        
+        # Only set mode to Standalone if we successfully created and tested the session
         st.session_state['deployment_mode'] = 'Standalone'
         return session
         
     except Exception as e:
+        # Set deployment mode to indicate connection failure
+        st.session_state['deployment_mode'] = 'Connection Failed'
         st.error(f"Failed to establish Snowflake connection: {str(e)}")
         st.info("""
         **Connection Options:**
         1. **Streamlit in Snowflake**: Deploy using `snow streamlit deploy`
         2. **Standalone**: Ensure `~/.snowflake/config.toml` is configured with JWT key-pair authentication
         """)
+        st.info("**Debug Information:**")
+        st.code(f"Config path: {os.path.expanduser('~/.snowflake/config.toml')}")
+        st.code(f"Error details: {str(e)}")
         st.stop()
 
 # Import custom modules from shared library
 try:
     from shared.analytics import SnowflakeDataLoader, ReconciliationEngine
-    from shared.components import CortexVisualizer
     from shared.utils import format_credits, get_status_color, calculate_percentage_change
 except ImportError as e:
     st.error(f"Module import error: {e}")
@@ -149,8 +164,7 @@ def get_app_components(_session):
     """
     data_loader = SnowflakeDataLoader(session=_session)
     reconciler = ReconciliationEngine(data_loader=data_loader)
-    visualizer = CortexVisualizer()
-    return data_loader, reconciler, visualizer
+    return data_loader, reconciler
 
 @time_it("main_app")
 def main():
@@ -173,7 +187,7 @@ def main():
     
     # Initialize components with caching for better performance
     try:
-        data_loader, reconciler, visualizer = get_app_components(session)
+        data_loader, reconciler = get_app_components(session)
     except Exception as e:
         st.error(f"Failed to initialize application components: {str(e)}")
         st.stop()
@@ -185,8 +199,23 @@ def main():
     with col2:
         # Deployment mode indicator
         mode = st.session_state.get('deployment_mode', 'Unknown')
-        mode_emoji = "☁️" if mode == 'SiS' else "💻" if mode == 'Standalone' else "❓"
-        st.markdown(f'<div class="data-freshness">{mode_emoji} Mode: {mode}</div>', 
+        mode_emoji = {
+            'SiS': "☁️",
+            'Standalone': "💻", 
+            'Unknown': "❓",
+            'Configuration Error': "⚠️",
+            'Connection Failed': "❌"
+        }.get(mode, "❓")
+        
+        mode_color = {
+            'SiS': "#28a745",
+            'Standalone': "#007bff",
+            'Unknown': "#6c757d", 
+            'Configuration Error': "#ffc107",
+            'Connection Failed': "#dc3545"
+        }.get(mode, "#6c757d")
+        
+        st.markdown(f'<div class="data-freshness" style="color: {mode_color};">{mode_emoji} Mode: {mode}</div>', 
                    unsafe_allow_html=True)
     with col3:
         # Data freshness indicator
@@ -254,7 +283,18 @@ def main():
     with st.spinner('Loading AI Services reconciliation data...'):
         with measure_time("reconciliation_data_load"):
             with measure_memory("reconciliation_memory"):
-                summary_data = data_loader.get_ai_services_reconciliation_cached(start_date, end_date)
+                try:
+                    summary_data = data_loader.get_ai_services_reconciliation_cached(start_date, end_date)
+                    if summary_data.get('reconciliation_status') == 'ERROR':
+                        st.error("❌ Reconciliation query failed. Please check the error logs.")
+                        summary_data = None
+                    elif summary_data.get('reconciliation_status') == 'NO_DATA':
+                        st.warning("⚠️ No data available for the selected date range.")
+                    else:
+                        pass  # Reconciliation loaded successfully
+                except Exception as e:
+                    st.error(f"❌ Failed to load reconciliation data: {str(e)}")
+                    summary_data = None
     
     if summary_data:
         # Key metrics in columns
@@ -513,6 +553,17 @@ def main():
                     st.info("No raw data available for export.")
             except Exception as e:
                 st.error(f"Error loading raw data: {str(e)}")
+    
+    # Debug and Admin Section
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔧 Debug & Admin")
+    
+    # Cache clearing for troubleshooting
+    if st.sidebar.button("🗑️ Clear Session Cache", help="Clear cached Snowflake session (useful for connection issues)"):
+        st.cache_resource.clear()
+        st.session_state['deployment_mode'] = 'Unknown'
+        st.success("Session cache cleared. Please refresh the page.")
+        st.rerun()
     
     # Performance Debugging Section (only show in development/debug mode)
     if st.sidebar.checkbox("🔍 Show Performance Debug", help="Display performance monitoring dashboard"):

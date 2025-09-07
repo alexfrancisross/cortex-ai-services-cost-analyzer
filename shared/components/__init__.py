@@ -1,4 +1,4 @@
 """Shared Streamlit components and visualizations"""
-from .visualizations import CortexVisualizer
+# Note: CortexVisualizer removed - app uses plotly directly
 
-__all__ = ['CortexVisualizer']
+__all__ = []
