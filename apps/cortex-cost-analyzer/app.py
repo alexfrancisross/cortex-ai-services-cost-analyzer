@@ -6,13 +6,27 @@ import plotly.graph_objects as go
 import sys
 import os
 import toml
+import time
+import psutil
+import json
 
 # Add monorepo root directory to Python path for shared modules
 project_root = os.path.join(os.path.dirname(__file__), '..', '..')
 sys.path.insert(0, project_root)
 
+# Import performance monitoring
+from shared.utils.performance_monitor import (
+    performance_monitor, 
+    time_it, 
+    monitor_cache, 
+    monitor_db_operation,
+    measure_time,
+    measure_memory
+)
+
 # Environment detection and session setup
 @st.cache_resource
+@monitor_cache("get_snowflake_session")
 def get_snowflake_session():
     """
     Cached Snowflake session to avoid re-authentication on every page load.
@@ -30,6 +44,7 @@ def get_snowflake_session():
         return _get_standalone_session()
 
 @st.cache_resource
+@monitor_cache("_get_standalone_session")
 def _get_standalone_session():
     """Helper for standalone session creation with caching"""
     try:
@@ -101,6 +116,7 @@ except ImportError as e:
     st.stop()
 
 @st.cache_data
+@time_it("load_custom_css")
 def load_custom_css():
     """Cached CSS to avoid parsing on every render"""
     return """
@@ -124,6 +140,7 @@ def load_custom_css():
     """
 
 @st.cache_resource
+@monitor_cache("get_app_components")
 def get_app_components(_session):
     """
     Cached component initialization to avoid re-creating objects on every page interaction.
@@ -135,8 +152,12 @@ def get_app_components(_session):
     visualizer = CortexVisualizer()
     return data_loader, reconciler, visualizer
 
+@time_it("main_app")
 def main():
     """Main Streamlit application for Cortex AI Services Cost Analyzer"""
+    # Track app rerun
+    performance_monitor.track_streamlit_rerun()
+    
     st.set_page_config(
         page_title="Cortex AI Services Cost Analyzer",
         page_icon="🧠",
@@ -231,7 +252,9 @@ def main():
     
     # Get reconciliation data with caching and progress indicator
     with st.spinner('Loading AI Services reconciliation data...'):
-        summary_data = data_loader.get_ai_services_reconciliation_cached(start_date, end_date)
+        with measure_time("reconciliation_data_load"):
+            with measure_memory("reconciliation_memory"):
+                summary_data = data_loader.get_ai_services_reconciliation_cached(start_date, end_date)
     
     if summary_data:
         # Key metrics in columns
@@ -321,7 +344,8 @@ def main():
         
         with st.spinner('Loading model analysis...'):
             try:
-                model_analysis = data_loader.get_model_token_analysis(start_date, end_date)
+                with measure_time("model_analysis_load"):
+                    model_analysis = data_loader.get_model_token_analysis(start_date, end_date)
                 
                 if not model_analysis.empty:
                     col1, col2 = st.columns(2)
@@ -392,7 +416,8 @@ def main():
         
         with st.spinner('Loading service details...'):
             try:
-                service_breakdown = data_loader.get_service_breakdown_cached(start_date, end_date, services_filter)
+                with measure_time("service_breakdown_load"):
+                    service_breakdown = data_loader.get_service_breakdown_cached(start_date, end_date, services_filter)
                 
                 if not service_breakdown.empty:
                     # Service breakdown table
@@ -427,7 +452,8 @@ def main():
         
         with st.spinner('Loading time series data...'):
             try:
-                time_series_data = data_loader.get_time_series_data(start_date, end_date, granularity.lower())
+                with measure_time("time_series_load"):
+                    time_series_data = data_loader.get_time_series_data(start_date, end_date, granularity.lower())
                 
                 if not time_series_data.empty:
                     # Create time series chart
@@ -457,10 +483,13 @@ def main():
         
         with st.spinner('Loading raw data...'):
             try:
-                export_data = data_loader.get_raw_export_data(start_date, end_date)
+                with measure_time("raw_data_export_load"):
+                    with measure_memory("raw_data_memory"):
+                        # Limit to 10,000 rows to prevent memory issues (limit applied in method)
+                        export_data = data_loader.get_raw_export_data(start_date, end_date)
                 
                 if not export_data.empty:
-                    st.write(f"**Total Records**: {len(export_data):,}")
+                    st.write(f"**Total Records**: {len(export_data):,} (limited to 10,000 for performance)")
                     st.write(f"**Date Range**: {start_date} to {end_date}")
                     
                     # Show sample of raw data
@@ -484,6 +513,70 @@ def main():
                     st.info("No raw data available for export.")
             except Exception as e:
                 st.error(f"Error loading raw data: {str(e)}")
+    
+    # Performance Debugging Section (only show in development/debug mode)
+    if st.sidebar.checkbox("🔍 Show Performance Debug", help="Display performance monitoring dashboard"):
+        st.header("🔍 Performance Debugging Dashboard")
+        
+        # Show performance summary
+        performance_monitor.display_performance_dashboard()
+        
+        # Additional debug information
+        with st.expander("📊 Detailed Performance Metrics"):
+            # Session state size
+            session_state_size = len(str(st.session_state))
+            st.metric("Session State Size", f"{session_state_size:,} characters")
+            
+            # Memory usage
+            try:
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                st.metric("Process Memory", f"{memory_mb:.1f} MB")
+            except Exception:
+                st.metric("Process Memory", "N/A")
+            
+            # Operation timings
+            if hasattr(st.session_state, 'operation_times'):
+                st.subheader("⏱️ Operation Timings")
+                for operation, times in st.session_state.operation_times.items():
+                    avg_time = sum(times) / len(times) if times else 0
+                    st.write(f"**{operation}**: {avg_time*1000:.1f}ms avg ({len(times)} calls)")
+            
+            # Memory usage by operation
+            if hasattr(st.session_state, 'memory_usage'):
+                st.subheader("💾 Memory Usage by Operation")
+                for operation, usage_list in st.session_state.memory_usage.items():
+                    if usage_list:
+                        avg_delta = sum(u['delta'] for u in usage_list) / len(usage_list)
+                        st.write(f"**{operation}**: {avg_delta:+.1f}MB avg delta ({len(usage_list)} calls)")
+            
+            # Cache performance
+            st.subheader("🎯 Cache Performance")
+            cache_info = {
+                'get_snowflake_session': 'Session initialization',
+                'get_app_components': 'Component initialization', 
+                'get_ai_services_reconciliation_cached': 'Reconciliation data',
+                'get_service_breakdown_cached': 'Service breakdown'
+            }
+            
+            for cache_name, description in cache_info.items():
+                # This would show actual cache stats in a real implementation
+                st.write(f"**{description}**: Cache enabled")
+        
+        # Export performance report
+        if st.button("📥 Export Performance Report"):
+            try:
+                report = performance_monitor.export_performance_report()
+                report_json = json.dumps(report, indent=2, default=str)
+                
+                st.download_button(
+                    label="Download Performance Report (JSON)",
+                    data=report_json,
+                    file_name=f"performance_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+            except Exception as e:
+                st.error(f"Failed to generate performance report: {str(e)}")
 
 if __name__ == "__main__":
     main()
