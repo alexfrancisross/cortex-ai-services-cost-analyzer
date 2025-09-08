@@ -1,0 +1,14 @@
+name: cortex_cost_analyzer
+channels:
+  - snowflake
+dependencies:
+  - streamlit
+  - pandas
+  - numpy
+  - plotly
+  - snowflake-snowpark-python
+  - openpyxl  # Excel export support
+  - xlsxwriter  # Alternative Excel engine
+  - psutil  # Performance monitoring
+  - cryptography  # JWT authentication
+  - toml  # Configuration parsing

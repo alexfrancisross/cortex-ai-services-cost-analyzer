@@ -12,11 +12,11 @@ import json
 import base64
 
 # Add monorepo root directory to Python path for shared modules
-project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+project_root = os.path.dirname(__file__)
 sys.path.insert(0, project_root)
 
 # Import performance monitoring
-from shared.utils.performance_monitor import (
+from common.utils.performance_monitor import (
     performance_monitor, 
     time_it, 
     monitor_cache, 
@@ -109,14 +109,14 @@ def _get_standalone_session():
         st.code(f"Error details: {str(e)}")
         st.stop()
 
-# Import custom modules from shared library
+# Import custom modules from common library
 try:
-    from shared.analytics import SnowflakeDataLoader, ReconciliationEngine
-    from shared.utils import format_credits, get_status_color, calculate_percentage_change
+    from common.analytics import SnowflakeDataLoader, ReconciliationEngine
+    from common.utils import format_credits, get_status_color, calculate_percentage_change
 except ImportError as e:
     st.error(f"Module import error: {e}")
     st.info("Please ensure all required modules are deployed with the application.")
-    st.info("In monorepo structure, ensure shared/ directory is in artifacts.")
+    st.info("In monorepo structure, ensure common/ directory is in artifacts.")
     st.stop()
 
 @st.cache_data
@@ -124,7 +124,7 @@ except ImportError as e:
 def get_cortex_logo_base64():
     """Load Cortex logo and convert to base64 for HTML embedding"""
     try:
-        logo_path = os.path.join(project_root, 'style', 'cortex_logo.png')
+        logo_path = os.path.join(os.path.dirname(__file__), 'common', 'assets', 'cortex_logo.png')
         with open(logo_path, "rb") as f:
             logo_data = f.read()
             logo_base64 = base64.b64encode(logo_data).decode()
