@@ -6,8 +6,6 @@
 
 A comprehensive cost analysis and reconciliation dashboard for **Snowflake Cortex AI Services**. This application provides detailed insights into AI service consumption, billing reconciliation, and performance analytics across all Cortex AI capabilities.
 
-![Cortex AI Services Cost Analyzer](common/assets/cortex_logo.png)
-
 ## 🚀 Features
 
 ### 📊 Reconciliation Analysis
@@ -293,7 +291,7 @@ The `sql/cortex_credit_consumption_analysis.sql` file provides standalone SQL an
 
 ## 📄 License
 
-This project is developed for NTT Data and follows Snowflake's development guidelines.
+This project follows Snowflake's development guidelines.
 
 ## 🆘 Support
 
