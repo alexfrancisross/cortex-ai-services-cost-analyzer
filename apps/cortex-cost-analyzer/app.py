@@ -438,18 +438,6 @@ def main():
     """
     st.markdown(header_html, unsafe_allow_html=True)
     
-    # Data freshness indicator (right-aligned)
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col3:
-        try:
-            freshness = data_loader.get_data_freshness()
-            freshness_hours = freshness.total_seconds() / 3600 if freshness else 0
-            freshness_color = "🔴" if freshness_hours > 6 else "🟡" if freshness_hours > 3 else "🟢"
-            st.markdown(f'<div class="data-freshness">{freshness_color} Data: {freshness_hours:.1f}h old</div>', 
-                       unsafe_allow_html=True)
-        except Exception:
-            st.markdown('<div class="data-freshness">❓ Data: Unknown</div>', 
-                       unsafe_allow_html=True)
     
     # Sidebar Configuration
     st.sidebar.header("📊 Analysis Configuration")
