@@ -57,8 +57,14 @@ class SnowflakeDataLoader:
             pass
         
         # Service table configurations - Corrected to avoid double-counting
-        # REMOVED CORTEX_FUNCTIONS_QUERY as it duplicates CORTEX_FUNCTIONS_USAGE (99.97% identical)
         self.service_configs = {
+            'CORTEX_FUNCTIONS_QUERY': {
+                'table': 'CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY',
+                'credit_column': 'TOKEN_CREDITS',
+                'time_column': None,  # Requires special handling with QUERY_HISTORY join
+                'granularity': 'Individual query level (most detailed)',
+                'description': 'Query-level LLM usage with user attribution'
+            },
             'CORTEX_FUNCTIONS_USAGE': {
                 'table': 'CORTEX_FUNCTIONS_USAGE_HISTORY',
                 'credit_column': 'TOKEN_CREDITS',
@@ -93,6 +99,13 @@ class SnowflakeDataLoader:
                 'time_column': 'START_TIME',
                 'granularity': 'Training session level',
                 'description': 'Model fine-tuning operations'
+            },
+            'CORTEX_DOCUMENT_PROCESSING': {
+                'table': 'CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY',
+                'credit_column': 'CREDITS_USED',
+                'time_column': 'START_TIME',
+                'granularity': 'Document processing level',
+                'description': 'Document processing operations'
             }
         }
         
@@ -815,20 +828,34 @@ class SnowflakeDataLoader:
         
         for service_name, config in self.service_configs.items():
             try:
-                # Special handling for CORTEX_FUNCTIONS_QUERY
+                # Special handling for CORTEX_FUNCTIONS_QUERY with enhanced details
                 if service_name == 'CORTEX_FUNCTIONS_QUERY':
                     query = f"""
                     SELECT 
                         '{service_name}' as service_type,
-                        cfq.*,
+                        cfq.query_id,
+                        cfq.warehouse_id,
+                        cfq.model_name,
+                        cfq.function_name,
+                        cfq.tokens,
+                        cfq.token_credits,
+                        qh.user_name,
                         qh.start_time,
-                        qh.end_time
+                        qh.end_time,
+                        qh.total_elapsed_time as duration_ms,
+                        ROUND(qh.total_elapsed_time / 1000.0, 3) as duration_seconds,
+                        qh.database_name,
+                        qh.schema_name,
+                        qh.warehouse_name,
+                        qh.query_type,
+                        qh.execution_status
                     FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']} cfq
                     LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY qh ON cfq.query_id = qh.query_id
                     WHERE DATE(qh.start_time) >= '{start_date}'::date
                         AND DATE(qh.start_time) <= '{end_date}'::date
                         AND qh.start_time IS NOT NULL
                     ORDER BY qh.start_time DESC
+                    LIMIT {limit}
                     """
                 elif config['time_column']:
                     if config['time_column'] == 'USAGE_DATE':
@@ -842,30 +869,57 @@ class SnowflakeDataLoader:
                           AND {config['time_column']} < '{end_date}'::date + INTERVAL '1 day'
                         """
                     
-                    query = f"""
-                    SELECT 
-                        '{service_name}' as service_type,
-                        *
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']}
-                    {time_filter}
-                    ORDER BY 
-                        CASE 
-                            WHEN '{config['time_column']}' IS NOT NULL 
-                            THEN {config['time_column']} 
-                            ELSE NULL 
-                        END DESC
-                    LIMIT {limit}
-                    """
+                    # Enhanced query for CORTEX_FUNCTIONS_USAGE with warehouse names and calculated metrics
+                    if service_name == 'CORTEX_FUNCTIONS_USAGE':
+                        query = f"""
+                        SELECT 
+                            '{service_name}' as service_type,
+                            cfh.start_time,
+                            cfh.end_time,
+                            cfh.function_name,
+                            cfh.model_name,
+                            cfh.warehouse_id,
+                            cfh.token_credits,
+                            cfh.tokens,
+                            w.warehouse_name,
+                            ROUND((cfh.token_credits / NULLIF(cfh.tokens, 0)) * 1000000, 6) as credits_per_million_tokens,
+                            ROUND(DATEDIFF('second', cfh.start_time, cfh.end_time), 2) as duration_seconds
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']} cfh
+                        LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY w ON cfh.warehouse_id = w.warehouse_id
+                        {time_filter}
+                        ORDER BY cfh.{config['time_column']} DESC
+                        LIMIT {limit}
+                        """
+                    else:
+                        # Standard query for other services
+                        query = f"""
+                        SELECT 
+                            '{service_name}' as service_type,
+                            *
+                        FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']}
+                        {time_filter}
+                        ORDER BY 
+                            CASE 
+                                WHEN '{config['time_column']}' IS NOT NULL 
+                                THEN {config['time_column']} 
+                                ELSE NULL 
+                            END DESC
+                        LIMIT {limit}
+                        """
                 else:
                     # Skip services without time columns
                     continue
                 
                 result = self.session.sql(query).collect()
-                service_data = pd.DataFrame([row.asDict() for row in result])
-                all_data.append(service_data)
+                if result:
+                    service_data = pd.DataFrame([row.asDict() for row in result])
+                    all_data.append(service_data)
                 
-            except Exception:
-                continue  # Skip inaccessible services
+            except Exception as e:
+                # Log the error but continue with other services
+                import streamlit as st
+                st.warning(f"⚠️ Skipping {service_name}: {str(e)[:100]}...")
+                continue
         
         if all_data:
             return pd.concat(all_data, ignore_index=True, sort=False)

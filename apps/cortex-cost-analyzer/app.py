@@ -31,29 +31,21 @@ def get_snowflake_session():
     """
     Cached Snowflake session to avoid re-authentication on every page load.
     Get Snowflake session - either from SiS (get_active_session) or standalone (connector)
+    Returns: (session, deployment_mode) tuple
     """
-    # Initialize deployment mode as Unknown
-    st.session_state['deployment_mode'] = 'Unknown'
-    
     try:
         # Try to get active session first (SiS environment)
         from snowflake.snowpark.context import get_active_session
         session = get_active_session()
         # Test the session with a simple query to ensure it's working
         session.sql("SELECT CURRENT_VERSION()").collect()
-        # Only set mode to SiS if we successfully got and tested the session
-        st.session_state['deployment_mode'] = 'SiS'
-        return session
-    except Exception as e:
-        # Log the SiS attempt failure for debugging
-        print(f"SiS session attempt failed: {str(e)}")
+        return session, 'SiS'
+    except Exception:
         # Fallback to standalone mode with key-pair authentication
         return _get_standalone_session()
 
-@st.cache_resource
-@monitor_cache("_get_standalone_session")
 def _get_standalone_session():
-    """Helper for standalone session creation with caching"""
+    """Helper for standalone session creation with caching. Returns (session, mode) tuple."""
     try:
         from snowflake.snowpark import Session
         from snowflake.connector import connect
@@ -63,8 +55,8 @@ def _get_standalone_session():
         # Load configuration from config.toml
         config_path = os.path.expanduser("~/.snowflake/config.toml")
         if not os.path.exists(config_path):
-            st.session_state['deployment_mode'] = 'Configuration Error'
             st.error(f"Configuration file not found: {config_path}")
+            st.info("Please ensure `~/.snowflake/config.toml` is configured with JWT key-pair authentication")
             st.stop()
         
         config = toml.load(config_path)
@@ -102,13 +94,9 @@ def _get_standalone_session():
         # Test the session with a simple query to ensure it's working
         session.sql("SELECT CURRENT_VERSION()").collect()
         
-        # Only set mode to Standalone if we successfully created and tested the session
-        st.session_state['deployment_mode'] = 'Standalone'
-        return session
+        return session, 'Standalone'
         
     except Exception as e:
-        # Set deployment mode to indicate connection failure
-        st.session_state['deployment_mode'] = 'Connection Failed'
         st.error(f"Failed to establish Snowflake connection: {str(e)}")
         st.info("""
         **Connection Options:**
@@ -183,7 +171,30 @@ def main():
     st.markdown(load_custom_css(), unsafe_allow_html=True)
     
     # Get Snowflake session (works for both SiS and standalone)
-    session = get_snowflake_session()
+    # Always ensure deployment mode is set correctly, even with caching
+    if 'deployment_mode' not in st.session_state:
+        st.session_state['deployment_mode'] = 'Unknown'
+    
+    session_result = get_snowflake_session()
+    if isinstance(session_result, tuple):
+        session, deployment_mode = session_result
+        # Always update the deployment mode, even if cached
+        st.session_state['deployment_mode'] = deployment_mode
+    else:
+        # Fallback for compatibility
+        session = session_result
+        # If we have a session but no mode info, try to determine it
+        if session and st.session_state['deployment_mode'] == 'Unknown':
+            try:
+                # Test if this is a SiS session by checking for specific attributes
+                from snowflake.snowpark.context import get_active_session
+                test_session = get_active_session()
+                if test_session == session:
+                    st.session_state['deployment_mode'] = 'SiS'
+                else:
+                    st.session_state['deployment_mode'] = 'Standalone'
+            except:
+                st.session_state['deployment_mode'] = 'Standalone'
     
     # Initialize components with caching for better performance
     try:
@@ -197,26 +208,8 @@ def main():
     with col1:
         st.title("🧠 Cortex AI Services Cost Analyzer")
     with col2:
-        # Deployment mode indicator
-        mode = st.session_state.get('deployment_mode', 'Unknown')
-        mode_emoji = {
-            'SiS': "☁️",
-            'Standalone': "💻", 
-            'Unknown': "❓",
-            'Configuration Error': "⚠️",
-            'Connection Failed': "❌"
-        }.get(mode, "❓")
-        
-        mode_color = {
-            'SiS': "#28a745",
-            'Standalone': "#007bff",
-            'Unknown': "#6c757d", 
-            'Configuration Error': "#ffc107",
-            'Connection Failed': "#dc3545"
-        }.get(mode, "#6c757d")
-        
-        st.markdown(f'<div class="data-freshness" style="color: {mode_color};">{mode_emoji} Mode: {mode}</div>', 
-                   unsafe_allow_html=True)
+        # Reserved for future use
+        st.empty()
     with col3:
         # Data freshness indicator
         try:
@@ -548,7 +541,23 @@ def main():
                         )
                     
                     with col2:
-                        st.info("💡 Excel export available in production version")
+                        # Excel export functionality
+                        try:
+                            from io import BytesIO
+                            excel_buffer = BytesIO()
+                            export_data.to_excel(excel_buffer, index=False, engine='openpyxl')
+                            excel_data = excel_buffer.getvalue()
+                            
+                            st.download_button(
+                                label="📊 Download Full Dataset (Excel)",
+                                data=excel_data,
+                                file_name=f"cortex_raw_data_{start_date}_{end_date}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        except ImportError:
+                            st.info("💡 Excel export requires openpyxl package")
+                        except Exception as e:
+                            st.warning(f"Excel export unavailable: {str(e)}")
                 else:
                     st.info("No raw data available for export.")
             except Exception as e:
@@ -566,7 +575,32 @@ def main():
         st.rerun()
     
     # Performance Debugging Section (only show in development/debug mode)
-    if st.sidebar.checkbox("🔍 Show Performance Debug", help="Display performance monitoring dashboard"):
+    show_debug = st.sidebar.checkbox("🔍 Show Performance Debug", help="Display performance monitoring dashboard")
+    
+    # Deployment mode indicator at bottom of sidebar
+    st.sidebar.markdown("---")
+    mode = st.session_state.get('deployment_mode', 'Unknown')
+    mode_emoji = {
+        'SiS': "☁️",
+        'Standalone': "💻", 
+        'Unknown': "❓",
+        'Configuration Error': "⚠️",
+        'Connection Failed': "❌"
+    }.get(mode, "❓")
+    
+    mode_color = {
+        'SiS': "#28a745",
+        'Standalone': "#007bff",
+        'Unknown': "#6c757d", 
+        'Configuration Error': "#ffc107",
+        'Connection Failed': "#dc3545"
+    }.get(mode, "#6c757d")
+    
+    st.sidebar.markdown(f'<div style="color: {mode_color}; font-weight: bold; text-align: center; margin-top: 1rem;">{mode_emoji} Mode: {mode}</div>', 
+                       unsafe_allow_html=True)
+    
+    # Show performance debugging dashboard if enabled
+    if show_debug:
         st.header("🔍 Performance Debugging Dashboard")
         
         # Show performance summary
