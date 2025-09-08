@@ -9,6 +9,7 @@ import toml
 import time
 import psutil
 import json
+import base64
 
 # Add monorepo root directory to Python path for shared modules
 project_root = os.path.join(os.path.dirname(__file__), '..', '..')
@@ -119,25 +120,242 @@ except ImportError as e:
     st.stop()
 
 @st.cache_data
+@time_it("get_cortex_logo_base64")
+def get_cortex_logo_base64():
+    """Load Cortex logo and convert to base64 for HTML embedding"""
+    try:
+        logo_path = os.path.join(project_root, 'style', 'cortex_logo.png')
+        with open(logo_path, "rb") as f:
+            logo_data = f.read()
+            logo_base64 = base64.b64encode(logo_data).decode()
+            return logo_base64
+    except Exception:
+        # Return empty string if logo not found - will hide the image
+        return ""
+
+def apply_snowflake_chart_styling(fig, title=None):
+    """Apply consistent Snowflake branding to Plotly charts"""
+    fig.update_layout(
+        title_font_color='#11567F',
+        title_font_size=16,
+        title_font_family='Arial',
+        font_family='Arial',
+        xaxis_title_font_color='#11567F',
+        yaxis_title_font_color='#11567F',
+        legend_font_color='#11567F'
+    )
+    if title:
+        fig.update_layout(title=title)
+    return fig
+
+def get_snowflake_colors():
+    """Return Snowflake brand color palette"""
+    return ['#29B5E8', '#11567F', '#75CDD7', '#FF9F36', '#7254A3', '#D45B90']
+
+@st.cache_data
 @time_it("load_custom_css")
 def load_custom_css():
-    """Cached CSS to avoid parsing on every render"""
+    """Cached CSS with Snowflake branding guidelines"""
     return """
     <style>
+    /* Snowflake Brand Colors from Style Guide */
+    :root {
+        --snowflake-blue: #29B5E8;
+        --mid-blue: #11567F;
+        --star-blue: #75CDD7;
+        --valencia-orange: #FF9F36;
+        --purple-moon: #7254A3;
+        --firstlight: #D45B90;
+        --medium-gray: #5B5B5B;
+        --midnight: #000000;
+    }
+    
+    /* Override Streamlit's default font family to Arial (Snowflake standard) */
+    .main .block-container, .sidebar .block-container {
+        font-family: Arial, sans-serif;
+    }
+    
+    /* Header styling with Snowflake branding */
+    .main-header {
+        background: linear-gradient(135deg, var(--snowflake-blue), var(--mid-blue));
+        padding: 2rem 1rem 1rem 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 2rem;
+        color: white;
+        text-align: center;
+    }
+    
+    .main-title {
+        font-family: Arial, sans-serif;
+        font-weight: bold;
+        font-size: 2.5rem;
+        color: white;
+        margin: 0;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    .cortex-logo {
+        height: 60px;
+        margin-right: 1rem;
+        vertical-align: middle;
+    }
+    
+    /* Metric cards with Snowflake styling */
     .metric-card {
-        background-color: #f0f2f6;
+        background: white;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid var(--snowflake-blue);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+    }
+    
+    .metric-card:hover {
+        box-shadow: 0 4px 12px rgba(41, 181, 232, 0.2);
+        transform: translateY(-2px);
+        transition: all 0.3s ease;
+    }
+    
+    /* Status colors aligned with Snowflake palette */
+    .status-excellent { 
+        color: var(--snowflake-blue); 
+        font-weight: bold;
+    }
+    .status-good { 
+        color: var(--star-blue); 
+        font-weight: bold;
+    }
+    .status-warning { 
+        color: var(--valencia-orange); 
+        font-weight: bold;
+    }
+    .status-critical { 
+        color: var(--firstlight); 
+        font-weight: bold;
+    }
+    
+    /* Data freshness indicator */
+    .data-freshness { 
+        font-size: 0.9rem; 
+        color: var(--medium-gray); 
+        text-align: right;
+        background: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        border: 2px solid var(--snowflake-blue);
+        font-weight: 500;
+    }
+    
+    /* Sidebar styling */
+    .sidebar .block-container {
+        background: linear-gradient(180deg, #f8f9fa, #e9ecef);
+        border-radius: 0.5rem;
+    }
+    
+    /* Section headers with Snowflake styling */
+    .section-header {
+        color: var(--mid-blue);
+        font-weight: bold;
+        border-bottom: 2px solid var(--snowflake-blue);
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    /* Tab styling - Remove default underlines and borders */
+    .stTabs [data-baseweb="tab-list"] {
+        background: linear-gradient(90deg, var(--snowflake-blue), var(--star-blue));
+        border-radius: 0.5rem 0.5rem 0 0;
+        border-bottom: none !important;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: white;
+        font-weight: 500;
+        border: none !important;
+        border-bottom: none !important;
+        text-decoration: none !important;
+        box-shadow: none !important;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: white !important;
+        color: var(--mid-blue) !important;
+        font-weight: bold;
+        border: none !important;
+        border-bottom: none !important;
+        text-decoration: none !important;
+        box-shadow: none !important;
+    }
+    
+    /* Remove any red underlines or borders */
+    .stTabs [data-baseweb="tab"]:focus,
+    .stTabs [data-baseweb="tab"]:hover,
+    .stTabs [data-baseweb="tab"]:active {
+        border: none !important;
+        border-bottom: none !important;
+        text-decoration: none !important;
+        outline: none !important;
+        box-shadow: none !important;
+    }
+    
+    /* Remove underlines from tab content */
+    .stTabs [data-baseweb="tab-list"] button {
+        text-decoration: none !important;
+        border-bottom: none !important;
+    }
+    
+    /* Override any Streamlit default tab styling */
+    .stTabs div[data-baseweb="tab-list"] div[role="tab"] {
+        border-bottom: none !important;
+        text-decoration: none !important;
+    }
+    
+    /* Remove red/error styling from tabs */
+    .stTabs [data-baseweb="tab-list"] [role="tab"][aria-selected="false"] {
+        border-bottom: none !important;
+        box-shadow: none !important;
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, var(--snowflake-blue), var(--mid-blue));
+        color: white;
+        border: none;
+        border-radius: 0.5rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        background: linear-gradient(135deg, var(--mid-blue), var(--snowflake-blue));
+        box-shadow: 0 4px 12px rgba(41, 181, 232, 0.3);
+    }
+    
+    /* Deployment mode indicator */
+    .deployment-mode {
+        background: var(--snowflake-blue);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        text-align: center;
+        font-weight: bold;
+        margin-top: 1rem;
+        box-shadow: 0 2px 8px rgba(41, 181, 232, 0.3);
+    }
+    
+    /* Info boxes with Snowflake branding */
+    .stAlert {
+        border-left: 4px solid var(--snowflake-blue);
+        background: linear-gradient(90deg, rgba(41, 181, 232, 0.05), rgba(255, 255, 255, 0.05));
+    }
+    
+    /* Chart container styling */
+    .chart-container {
+        background: white;
         padding: 1rem;
         border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
-    }
-    .status-excellent { color: #28a745; }
-    .status-good { color: #ffc107; }
-    .status-warning { color: #fd7e14; }
-    .status-critical { color: #dc3545; }
-    .data-freshness { 
-        font-size: 0.8rem; 
-        color: #6c757d; 
-        text-align: right; 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-top: 3px solid var(--snowflake-blue);
     }
     </style>
     """
@@ -160,9 +378,12 @@ def main():
     # Track app rerun
     performance_monitor.track_streamlit_rerun()
     
+    # Set page icon to Cortex logo
+    cortex_icon_path = os.path.join(project_root, 'assets', 'cortex_logo.png')
+    
     st.set_page_config(
         page_title="Cortex AI Services Cost Analyzer",
-        page_icon="🧠",
+        page_icon=cortex_icon_path,
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -203,15 +424,23 @@ def main():
         st.error(f"Failed to initialize application components: {str(e)}")
         st.stop()
     
-    # Header
+    # Header with Snowflake branding and Cortex logo
+    header_html = f"""
+    <div class="main-header">
+        <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 1rem;">
+            <img src="data:image/png;base64,{get_cortex_logo_base64()}" class="cortex-logo" alt="Cortex Logo">
+            <h1 class="main-title">CORTEX AI SERVICES COST ANALYZER</h1>
+        </div>
+        <div style="font-size: 1.1rem; opacity: 0.9;">
+            Comprehensive AI billing analysis and reconciliation dashboard
+        </div>
+    </div>
+    """
+    st.markdown(header_html, unsafe_allow_html=True)
+    
+    # Data freshness indicator (right-aligned)
     col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        st.title("🧠 Cortex AI Services Cost Analyzer")
-    with col2:
-        # Reserved for future use
-        st.empty()
     with col3:
-        # Data freshness indicator
         try:
             freshness = data_loader.get_data_freshness()
             freshness_hours = freshness.total_seconds() / 3600 if freshness else 0
@@ -269,7 +498,7 @@ def main():
     services_filter = available_services  # Always include all services
     
     # Main Dashboard Content
-    st.header("📊 Reconciliation Summary")
+    st.markdown('<h2 class="section-header">📊 Reconciliation Summary</h2>', unsafe_allow_html=True)
     st.markdown(f"**Analysis Period:** {start_date.strftime('%B %d, %Y')} - {end_date.strftime('%B %d, %Y')}")
     
     # Get reconciliation data with caching and progress indicator
@@ -323,7 +552,7 @@ def main():
             st.markdown(f'<h3 style="color: {status_color};">{status}</h3>', unsafe_allow_html=True)
     
         # Service breakdown
-        st.subheader("💰 Service Breakdown")
+        st.markdown('<h3 class="section-header">💰 Service Breakdown</h3>', unsafe_allow_html=True)
         
         individual_services = summary_data.get('individual_services', {})
         if individual_services:
@@ -348,9 +577,16 @@ def main():
                         df_services, 
                         values='Credits', 
                         names='Service',
-                        title="Credit Distribution by Service"
+                        title="Credit Distribution by Service",
+                        color_discrete_sequence=get_snowflake_colors()
                     )
-                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    fig.update_traces(
+                        textposition='inside', 
+                        textinfo='percent+label',
+                        textfont_size=12,
+                        marker=dict(line=dict(color='#FFFFFF', width=2))
+                    )
+                    apply_snowflake_chart_styling(fig)
                     st.plotly_chart(fig, use_container_width=True)
             
             with col2:
@@ -367,7 +603,7 @@ def main():
         st.info("• Data latency (ACCOUNT_USAGE views have up to 3-hour delay)")
     
     # Enhanced Detailed Analysis Section
-    st.header("📈 Enhanced Detailed Analysis")
+    st.markdown('<h2 class="section-header">📈 Enhanced Detailed Analysis</h2>', unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4 = st.tabs(["Model Analysis", "Service Details", "Time Series", "Raw Data"])
     
@@ -391,8 +627,15 @@ def main():
                             names="MODEL_NAME",
                             title="Credit Distribution by Model",
                             hole=0.4,
+                            color_discrete_sequence=get_snowflake_colors()
                         )
-                        fig.update_traces(textposition="inside", textinfo="percent+label")
+                        fig.update_traces(
+                            textposition="inside", 
+                            textinfo="percent+label",
+                            textfont_size=12,
+                            marker=dict(line=dict(color='#FFFFFF', width=2))
+                        )
+                        apply_snowflake_chart_styling(fig)
                         st.plotly_chart(fig, use_container_width=True)
 
                     with col2:
@@ -403,9 +646,16 @@ def main():
                             y="TOKENS_PER_CREDIT",
                             title="Tokens per Credit by Model (Efficiency)",
                             text="TOKENS_PER_CREDIT",
+                            color_discrete_sequence=['#29B5E8']
                         )
-                        fig.update_traces(texttemplate="%{text:.0f}")
+                        fig.update_traces(
+                            texttemplate="%{text:.0f}",
+                            marker_color='#29B5E8',
+                            marker_line_color='#11567F',
+                            marker_line_width=1
+                        )
                         fig.update_xaxes(tickangle=45)
+                        apply_snowflake_chart_styling(fig)
                         st.plotly_chart(fig, use_container_width=True)
 
                     # Token usage metrics
@@ -489,16 +739,19 @@ def main():
                     time_series_data = data_loader.get_time_series_data(start_date, end_date, granularity.lower())
                 
                 if not time_series_data.empty:
-                    # Create time series chart
+                    # Create time series chart with Snowflake branding
                     fig = px.line(
                         time_series_data, 
                         x='period', 
                         y='credits', 
                         color='service_type',
                         title=f"{granularity} AI Services Usage Trends",
-                        labels={'credits': 'Credits Used', 'period': 'Period'}
+                        labels={'credits': 'Credits Used', 'period': 'Period'},
+                        color_discrete_sequence=get_snowflake_colors()
                     )
                     fig.update_layout(hovermode='x unified')
+                    fig.update_traces(line=dict(width=3))
+                    apply_snowflake_chart_styling(fig)
                     st.plotly_chart(fig, use_container_width=True)
                     
                     # Peak usage analysis
@@ -612,12 +865,12 @@ def main():
         'Connection Failed': "#dc3545"
     }.get(mode, "#6c757d")
     
-    st.sidebar.markdown(f'<div style="color: {mode_color}; font-weight: bold; text-align: center; margin-top: 1rem;">{mode_emoji} Mode: {mode}</div>', 
+    st.sidebar.markdown(f'<div class="deployment-mode">{mode_emoji} Mode: {mode}</div>', 
                        unsafe_allow_html=True)
     
     # Show performance debugging dashboard if enabled
     if show_debug:
-        st.header("🔍 Performance Debugging Dashboard")
+        st.markdown('<h2 class="section-header">🔍 Performance Debugging Dashboard</h2>', unsafe_allow_html=True)
         
         # Show performance summary
         performance_monitor.display_performance_dashboard()
