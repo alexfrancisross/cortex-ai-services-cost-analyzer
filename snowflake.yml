@@ -10,7 +10,7 @@ entities:
       name: "CORTEX_AI_COST_ANALYZER" 
       schema: "CORTEX_APPS"
       database: "ANALYTICS"
-    stage: "CORTEX_ANALYZER_STAGE"
+    stage: "ANALYTICS.CORTEX_APPS.CORTEX_ANALYZER_STAGE"
     query_warehouse: "COMPUTE_WH"
     main_file: "streamlit_app.py"
     title: "Cortex AI Services Cost Analyzer"
