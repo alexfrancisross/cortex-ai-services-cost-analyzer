@@ -525,6 +525,12 @@ def main():
                     st.write(f"**Total Records**: {len(export_data):,} (limited to 10,000 for performance)")
                     st.write(f"**Date Range**: {start_date} to {end_date}")
                     
+                    # Show unified credit total if TOTAL_CREDITS column exists
+                    if 'TOTAL_CREDITS' in export_data.columns:
+                        total_credits = export_data['TOTAL_CREDITS'].sum()
+                        st.write(f"**Total Credits**: {total_credits:.6f} (unified across all service types)")
+                        st.info("💡 Use the **TOTAL_CREDITS** column for accurate credit totals (combines TOKEN_CREDITS, CREDITS, and CREDITS_USED)")
+                    
                     # Show sample of raw data
                     st.subheader("Data Preview (First 100 rows)")
                     st.dataframe(export_data.head(100), use_container_width=True)

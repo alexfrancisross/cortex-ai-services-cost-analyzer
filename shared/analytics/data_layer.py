@@ -65,13 +65,6 @@ class SnowflakeDataLoader:
                 'granularity': 'Individual query level (most detailed)',
                 'description': 'Query-level LLM usage with user attribution'
             },
-            'CORTEX_FUNCTIONS_USAGE': {
-                'table': 'CORTEX_FUNCTIONS_USAGE_HISTORY',
-                'credit_column': 'TOKEN_CREDITS',
-                'time_column': 'START_TIME',
-                'granularity': 'Hourly by function/model',
-                'description': 'LLM function calls (includes both direct and query-embedded)'
-            },
             'CORTEX_ANALYST': {
                 'table': 'CORTEX_ANALYST_USAGE_HISTORY', 
                 'credit_column': 'CREDITS',
@@ -869,34 +862,8 @@ class SnowflakeDataLoader:
                           AND {config['time_column']} < '{end_date}'::date + INTERVAL '1 day'
                         """
                     
-                    # Enhanced query for CORTEX_FUNCTIONS_USAGE with warehouse names and calculated metrics
-                    if service_name == 'CORTEX_FUNCTIONS_USAGE':
-                        query = f"""
-                        SELECT 
-                            '{service_name}' as service_type,
-                            cfh.start_time,
-                            cfh.end_time,
-                            cfh.function_name,
-                            cfh.model_name,
-                            cfh.warehouse_id,
-                            cfh.token_credits,
-                            cfh.tokens,
-                            w.warehouse_name,
-                            ROUND((cfh.token_credits / NULLIF(cfh.tokens, 0)) * 1000000, 6) as credits_per_million_tokens,
-                            ROUND(DATEDIFF('second', cfh.start_time, cfh.end_time), 2) as duration_seconds
-                        FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']} cfh
-                        LEFT JOIN (
-                            SELECT DISTINCT warehouse_id, warehouse_name 
-                            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
-                        ) w ON cfh.warehouse_id = w.warehouse_id
-                        WHERE cfh.{config['time_column']} >= '{start_date}'::date
-                          AND cfh.{config['time_column']} < '{end_date}'::date + INTERVAL '1 day'
-                        ORDER BY cfh.{config['time_column']} DESC
-                        LIMIT {limit}
-                        """
-                    else:
-                        # Standard query for other services
-                        query = f"""
+                    # Standard query for all time-based services
+                    query = f"""
                         SELECT 
                             '{service_name}' as service_type,
                             *
@@ -917,6 +884,30 @@ class SnowflakeDataLoader:
                 result = self.session.sql(query).collect()
                 if result:
                     service_data = pd.DataFrame([row.asDict() for row in result])
+                    
+                    # Create unified TOTAL_CREDITS column combining all credit types
+                    token_credits = service_data['TOKEN_CREDITS'] if 'TOKEN_CREDITS' in service_data.columns else 0
+                    credits = service_data['CREDITS'] if 'CREDITS' in service_data.columns else 0
+                    credits_used = service_data['CREDITS_USED'] if 'CREDITS_USED' in service_data.columns else 0
+                    
+                    # Handle Series vs scalar values properly and convert to float
+                    if hasattr(token_credits, 'fillna'):
+                        token_credits = token_credits.fillna(0).astype(float)
+                    else:
+                        token_credits = float(token_credits) if token_credits != 0 else 0.0
+                        
+                    if hasattr(credits, 'fillna'):
+                        credits = credits.fillna(0).astype(float)
+                    else:
+                        credits = float(credits) if credits != 0 else 0.0
+                        
+                    if hasattr(credits_used, 'fillna'):
+                        credits_used = credits_used.fillna(0).astype(float)
+                    else:
+                        credits_used = float(credits_used) if credits_used != 0 else 0.0
+                    
+                    service_data['TOTAL_CREDITS'] = token_credits + credits + credits_used
+                    
                     all_data.append(service_data)
                 
             except Exception as e:
