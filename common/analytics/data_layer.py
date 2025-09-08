@@ -651,7 +651,7 @@ class SnowflakeDataLoader:
                 query = f"""
                 SELECT function_name, model_name,
                        SUM(credits_used) as total_credits,
-                       SUM(pages_processed) as total_pages,
+                       SUM(page_count) as total_pages,
                        COUNT(*) as jobs
                 FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']}
                 WHERE start_time >= '{start_date}'::date

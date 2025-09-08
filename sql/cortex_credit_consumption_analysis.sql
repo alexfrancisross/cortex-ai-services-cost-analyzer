@@ -1,9 +1,9 @@
 -- =============================================================================
--- CORTEX AI SERVICES COMPREHENSIVE COST ANALYSIS
+-- CORTEX AI SERVICES COST ANALYSIS
 -- =============================================================================
 -- This script provides all insights from the Cortex Cost Analyzer Streamlit app
 -- Includes: Reconciliation, Model Analysis, Service Breakdown, Time Series, Raw Data
--- Author: Cortex Cost Analyzer Team
+-- Author: Alex Ross
 -- Date: 2025-09-08
 -- =============================================================================
 
