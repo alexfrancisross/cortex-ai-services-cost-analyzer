@@ -544,8 +544,18 @@ def main():
                         # Excel export functionality
                         try:
                             from io import BytesIO
+                            
+                            # Fix timezone-aware datetime columns for Excel compatibility
+                            excel_data_copy = export_data.copy()
+                            
+                            # Convert timezone-aware datetime columns to timezone-naive
+                            for col in excel_data_copy.columns:
+                                if excel_data_copy[col].dtype == 'datetime64[ns, UTC]' or 'datetime' in str(excel_data_copy[col].dtype):
+                                    if hasattr(excel_data_copy[col].dtype, 'tz') and excel_data_copy[col].dtype.tz is not None:
+                                        excel_data_copy[col] = excel_data_copy[col].dt.tz_localize(None)
+                            
                             excel_buffer = BytesIO()
-                            export_data.to_excel(excel_buffer, index=False, engine='openpyxl')
+                            excel_data_copy.to_excel(excel_buffer, index=False, engine='openpyxl')
                             excel_data = excel_buffer.getvalue()
                             
                             st.download_button(

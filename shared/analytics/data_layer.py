@@ -885,8 +885,12 @@ class SnowflakeDataLoader:
                             ROUND((cfh.token_credits / NULLIF(cfh.tokens, 0)) * 1000000, 6) as credits_per_million_tokens,
                             ROUND(DATEDIFF('second', cfh.start_time, cfh.end_time), 2) as duration_seconds
                         FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']} cfh
-                        LEFT JOIN SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY w ON cfh.warehouse_id = w.warehouse_id
-                        {time_filter}
+                        LEFT JOIN (
+                            SELECT DISTINCT warehouse_id, warehouse_name 
+                            FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+                        ) w ON cfh.warehouse_id = w.warehouse_id
+                        WHERE cfh.{config['time_column']} >= '{start_date}'::date
+                          AND cfh.{config['time_column']} < '{end_date}'::date + INTERVAL '1 day'
                         ORDER BY cfh.{config['time_column']} DESC
                         LIMIT {limit}
                         """
