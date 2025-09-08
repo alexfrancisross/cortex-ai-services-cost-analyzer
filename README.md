@@ -70,11 +70,16 @@ cortex-consumption/
 - Snowflake account with Cortex AI Services enabled
 - Access to `SNOWFLAKE.ACCOUNT_USAGE` views:
   - `METERING_HISTORY`
+  - `METERING_DAILY_HISTORY`
+  - `QUERY_HISTORY`
   - `CORTEX_FUNCTIONS_USAGE_HISTORY`
+  - `CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY`
   - `CORTEX_ANALYST_USAGE_HISTORY`
+  - `CORTEX_SEARCH_SERVING_USAGE_HISTORY`
+  - `CORTEX_FINE_TUNING_USAGE_HISTORY`
+  - `CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY`
   - `DOCUMENT_AI_USAGE_HISTORY`
-  - `SEARCH_OPTIMIZATION_USAGE_HISTORY`
-  - `AUTOMATIC_CLUSTERING_HISTORY`
+- (Optional) Access to `SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY` for improved reconciliation accuracy across multiple accounts.
 
 ### Required Roles/Permissions
 ```sql
@@ -228,12 +233,6 @@ The application performs reconciliation by:
 
 ## 🎨 Customization
 
-### Snowflake Branding
-The application follows Snowflake's brand guidelines:
-- **Colors**: Snowflake Blue (#29B5E8), Mid Blue (#11567F)
-- **Typography**: Arial font family
-- **Visual Elements**: Consistent with Snowflake design system
-
 ### Adding New Services
 To support additional Cortex services:
 1. Update `SERVICE_CONFIGS` in `data_layer.py`
@@ -281,18 +280,6 @@ The `sql/cortex_credit_consumption_analysis.sql` file provides standalone SQL an
 - Automated reporting
 - Data validation
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Follow Snowflake's coding standards
-4. Add tests for new functionality
-5. Submit a pull request
-
-## 📄 License
-
-This project follows Snowflake's development guidelines.
-
 ## 🆘 Support
 
 For support and questions:
@@ -301,5 +288,3 @@ For support and questions:
 - Use the debug mode for performance troubleshooting
 
 ---
-
-**Built with ❄️ by the Snowflake team for enterprise-grade AI cost analytics**
