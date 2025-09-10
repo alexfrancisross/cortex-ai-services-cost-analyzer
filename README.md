@@ -6,6 +6,8 @@
 
 A comprehensive cost analysis and reconciliation dashboard for **Snowflake Cortex AI Services**. This application provides detailed insights into AI service consumption, billing reconciliation, and performance analytics across all Cortex AI capabilities.
 
+![Demo](img/demo.gif)
+
 ## 🚀 Features
 
 ### 📊 Reconciliation Analysis
