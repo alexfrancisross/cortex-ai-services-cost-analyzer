@@ -285,8 +285,8 @@ The `sql/cortex_credit_consumption_analysis.sql` file provides standalone SQL an
 ## 🆘 Support
 
 For support and questions:
-- Review the [Snowflake Cortex AI documentation](https://docs.snowflake.com/en/user-guide/snowflake-cortex)
-- Check the [Snowflake CLI documentation](https://docs.snowflake.com/en/developer-guide/snowflake-cli)
+- Review the [Snowflake Cortex AI documentation](https://docs.snowflake.com/en/guides-overview-ai-features)
+- Check the [Snowflake CLI documentation](https://docs.snowflake.com/en/developer-guide/snowflake-cli/index)
 - Use the debug mode for performance troubleshooting
 
 ---
