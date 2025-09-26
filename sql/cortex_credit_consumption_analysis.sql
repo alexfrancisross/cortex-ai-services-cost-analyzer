@@ -1,10 +1,18 @@
 -- =============================================================================
--- CORTEX AI SERVICES COST ANALYSIS
+-- CORTEX AI SERVICES COST ANALYSIS (Enhanced with Individual Function Breakdown)
 -- =============================================================================
 -- This script provides all insights from the Cortex Cost Analyzer Streamlit app
--- Includes: Reconciliation, Model Analysis, Service Breakdown, Time Series, Raw Data
+-- Includes: Reconciliation, Enhanced Model Analysis, Specialized Functions, 
+--          Individual Service Analysis, Time Series with Function Breakdown, Raw Data
+-- 
+-- New Features:
+-- - Individual specialized function breakdown (TRANSLATE, CLASSIFY_TEXT, etc.)
+-- - Explicit model vs specialized function separation
+-- - Cortex Analyst, Document AI, and Cortex Search analysis
+-- - Enhanced time series with individual function lines
+-- 
 -- Author: Alex Ross
--- Date: 2025-09-08
+-- Date: 2025-09-26 (Updated to match Streamlit app v2.0)
 -- =============================================================================
 
 -- Set date range variables (adjust as needed)
@@ -127,14 +135,21 @@ SELECT
 FROM summary;
 
 -- =============================================================================
--- 2. MODEL TOKEN & CREDIT ANALYSIS
+-- 2. MODEL TOKEN & CREDIT ANALYSIS (Enhanced with Model Types)
 -- =============================================================================
--- Purpose: Analyze token consumption and credit costs by AI model
--- Insights: Model efficiency, usage patterns, cost optimization opportunities
+-- Purpose: Analyze token consumption and credit costs by AI model with type classification
+-- Insights: Model efficiency, usage patterns, explicit vs specialized function breakdown
 
 SELECT 
-    '2. MODEL ANALYSIS' as analysis_type,
-    MODEL_NAME,
+    '2a. MODEL ANALYSIS - EXPLICIT MODELS' as analysis_type,
+    CASE 
+        WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'Specialized Functions'
+        ELSE MODEL_NAME
+    END as MODEL_NAME,
+    CASE 
+        WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'SPECIALIZED'
+        ELSE 'EXPLICIT_MODEL'
+    END as MODEL_TYPE,
     COUNT(*) as invocations,
     SUM(TOKENS) as total_tokens,
     SUM(TOKEN_CREDITS) as total_credits,
@@ -147,7 +162,75 @@ SELECT
 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
 WHERE START_TIME >= $start_date::date
     AND START_TIME < $end_date::date + INTERVAL '1 day'
-GROUP BY MODEL_NAME
+GROUP BY 
+    CASE 
+        WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'Specialized Functions'
+        ELSE MODEL_NAME
+    END,
+    CASE 
+        WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'SPECIALIZED'
+        ELSE 'EXPLICIT_MODEL'
+    END
+ORDER BY total_credits DESC;
+
+-- =============================================================================
+-- 2b. SPECIALIZED FUNCTIONS ANALYSIS
+-- =============================================================================
+-- Purpose: Detailed breakdown of specialized functions (TRANSLATE, CLASSIFY_TEXT, etc.)
+-- Insights: Function-specific usage patterns and efficiency
+
+SELECT 
+    '2b. SPECIALIZED FUNCTIONS ANALYSIS' as analysis_type,
+    CASE 
+        WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'OTHER'
+        ELSE FUNCTION_NAME
+    END as FUNCTION_NAME,
+    CASE 
+        WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'Translation Services'
+        WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'Text Classification'
+        WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'Sentiment Analysis'
+        WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'Text Summarization'
+        WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'Text Embeddings'
+        WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'Answer Extraction'
+        WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI Information Extraction'
+        WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other'
+        ELSE 'Other'
+    END as FUNCTION_DESCRIPTION,
+    COUNT(*) as invocations,
+    SUM(TOKENS) as total_tokens,
+    SUM(TOKEN_CREDITS) as total_credits,
+    AVG(TOKENS) as avg_tokens_per_call,
+    AVG(TOKEN_CREDITS) as avg_credits_per_call,
+    NULLIF(SUM(TOKENS) / NULLIF(SUM(TOKEN_CREDITS), 0), 0) as tokens_per_credit,
+    ROUND(100 * SUM(TOKEN_CREDITS) / NULLIF((
+        SELECT SUM(TOKEN_CREDITS) 
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY 
+        WHERE START_TIME >= $start_date::date
+            AND START_TIME < $end_date::date + INTERVAL '1 day'
+            AND (MODEL_NAME = '' OR MODEL_NAME IS NULL)
+    ), 0), 2) as pct_of_specialized_credits,
+    MIN(START_TIME) as first_usage,
+    MAX(START_TIME) as last_usage
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
+WHERE START_TIME >= $start_date::date
+    AND START_TIME < $end_date::date + INTERVAL '1 day'
+    AND (MODEL_NAME = '' OR MODEL_NAME IS NULL)
+GROUP BY 
+    CASE 
+        WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'OTHER'
+        ELSE FUNCTION_NAME
+    END,
+    CASE 
+        WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'Translation Services'
+        WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'Text Classification'
+        WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'Sentiment Analysis'
+        WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'Text Summarization'
+        WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'Text Embeddings'
+        WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'Answer Extraction'
+        WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI Information Extraction'
+        WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other'
+        ELSE 'Other'
+    END
 ORDER BY total_credits DESC;
 
 -- =============================================================================
@@ -283,22 +366,154 @@ WHERE total_credits > 0
 ORDER BY total_credits DESC;
 
 -- =============================================================================
--- 4. DAILY TIME SERIES ANALYSIS
+-- 2c. CORTEX ANALYST ANALYSIS  
+-- =============================================================================
+-- Purpose: Detailed analysis of Cortex Analyst usage (REST API access)
+
+SELECT 
+    '2c. CORTEX ANALYST ANALYSIS' as analysis_type,
+    COUNT(*) as total_requests,
+    SUM(CREDITS) as total_credits,
+    AVG(CREDITS) as avg_credits_per_request,
+    ROUND(100 * SUM(CREDITS) / NULLIF((
+        SELECT SUM(CREDITS) 
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY 
+        WHERE START_TIME >= $start_date::date
+            AND START_TIME < $end_date::date + INTERVAL '1 day'
+    ), 0), 2) as pct_of_total_credits,
+    MIN(START_TIME) as first_usage,
+    MAX(START_TIME) as last_usage,
+    COUNT(DISTINCT USERNAME) as unique_users
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
+WHERE START_TIME >= $start_date::date
+    AND START_TIME < $end_date::date + INTERVAL '1 day';
+
+-- =============================================================================
+-- 2d. DOCUMENT AI ANALYSIS
+-- =============================================================================
+-- Purpose: Detailed analysis of Document AI usage (modern document processing)
+
+SELECT 
+    '2d. DOCUMENT AI ANALYSIS' as analysis_type,
+    COUNT(*) as total_operations,
+    SUM(CREDITS_USED) as total_credits,
+    AVG(CREDITS_USED) as avg_credits_per_operation,
+    COALESCE(SUM(DOCUMENT_COUNT), 0) as total_documents,
+    COALESCE(SUM(PAGE_COUNT), 0) as total_pages,
+    COALESCE(AVG(DOCUMENT_COUNT), 0) as avg_documents_per_operation,
+    COALESCE(AVG(PAGE_COUNT), 0) as avg_pages_per_operation,
+    ROUND(100 * SUM(CREDITS_USED) / NULLIF((
+        SELECT SUM(CREDITS_USED) 
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY 
+        WHERE START_TIME >= $start_date::date
+            AND START_TIME < $end_date::date + INTERVAL '1 day'
+    ), 0), 2) as pct_of_total_credits,
+    MIN(START_TIME) as first_usage,
+    MAX(START_TIME) as last_usage,
+    COUNT(DISTINCT QUERY_ID) as unique_queries
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
+WHERE START_TIME >= $start_date::date
+    AND START_TIME < $end_date::date + INTERVAL '1 day';
+
+-- =============================================================================
+-- 2e. CORTEX SEARCH ANALYSIS
+-- =============================================================================
+-- Purpose: Detailed analysis of Cortex Search usage (vector search operations)
+
+SELECT 
+    '2e. CORTEX SEARCH ANALYSIS' as analysis_type,
+    COUNT(*) as total_operations,
+    SUM(CREDITS) as total_credits,
+    AVG(CREDITS) as avg_credits_per_operation,
+    ROUND(100 * SUM(CREDITS) / NULLIF((
+        SELECT SUM(CREDITS) 
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY 
+        WHERE START_TIME >= $start_date::date
+            AND START_TIME < $end_date::date + INTERVAL '1 day'
+    ), 0), 2) as pct_of_total_credits,
+    MIN(START_TIME) as first_usage,
+    MAX(START_TIME) as last_usage,
+    COUNT(DISTINCT SERVICE_NAME) as unique_services
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+WHERE START_TIME >= $start_date::date
+    AND START_TIME < $end_date::date + INTERVAL '1 day';
+
+-- =============================================================================
+-- 4. DAILY TIME SERIES ANALYSIS (Enhanced with Individual Function Breakdown)
 -- =============================================================================
 -- Purpose: Track daily usage trends across all AI services
 -- Insights: Usage patterns, peak periods, growth trends
 
 WITH daily_time_series AS (
-    -- Cortex Functions Usage
+    -- Specialized Functions (individual breakdown)
     SELECT 
         DATE_TRUNC('day', start_time) as period,
-        'CORTEX_FUNCTIONS_USAGE' as service_type,
+        CASE 
+            WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
+                CASE 
+                    WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
+                    ELSE 'Other Specialized'
+                END
+            WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
+            WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
+            WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
+            WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'SUMMARIZE'
+            WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
+            WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
+            WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
+            ELSE 'Other Specialized'
+        END as service_type,
         SUM(COALESCE(token_credits, 0)) as credits,
         COUNT(*) as operation_count
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
+      AND (MODEL_NAME IS NULL OR MODEL_NAME = '')  -- Only specialized functions
+    GROUP BY DATE_TRUNC('day', start_time), 
+        CASE 
+            WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
+                CASE 
+                    WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
+                    ELSE 'Other Specialized'
+                END
+            WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
+            WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
+            WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
+            WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'SUMMARIZE'
+            WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
+            WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
+            WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
+            ELSE 'Other Specialized'
+        END
+    
+    UNION ALL
+    
+    -- Explicit Model Functions (individual breakdown)
+    SELECT 
+        DATE_TRUNC('day', start_time) as period,
+        CASE 
+            WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
+            WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
+            WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
+            WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
+            WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
+            ELSE 'Other Explicit'
+        END as service_type,
+        SUM(COALESCE(token_credits, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+      AND (MODEL_NAME IS NOT NULL AND MODEL_NAME != '')  -- Only explicit model functions
+    GROUP BY DATE_TRUNC('day', start_time), 
+        CASE 
+            WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
+            WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
+            WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
+            WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
+            WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
+            ELSE 'Other Explicit'
+        END
     
     UNION ALL
     
@@ -565,7 +780,7 @@ SELECT
     $start_date as analysis_start_date,
     $end_date as analysis_end_date,
     DATEDIFF('day', $start_date::date, $end_date::date) as analysis_period_days,
-    'All insights from Cortex Cost Analyzer Streamlit app have been generated' as message;
+    'All enhanced insights from Cortex Cost Analyzer Streamlit app v2.0 have been generated - includes individual function breakdown' as message;
 
 -- =============================================================================
 -- USAGE NOTES:
@@ -576,4 +791,18 @@ SELECT
 -- 4. Use analysis_type column to filter results by section
 -- 5. Reconciliation variance should be < 5% for accurate billing
 -- 6. High-cost calls (>0.1 credits) may indicate optimization opportunities
+-- 
+-- ENHANCED FEATURES IN THIS VERSION:
+-- - Section 2a: Explicit models vs specialized functions breakdown
+-- - Section 2b: Individual specialized function analysis (TRANSLATE, CLASSIFY_TEXT, etc.)
+-- - Section 2c: Cortex Analyst REST API analysis
+-- - Section 2d: Document AI processing analysis
+-- - Section 2e: Cortex Search vector operations analysis
+-- - Section 4: Time series with individual function breakdown instead of aggregated services
+-- 
+-- ALIGNMENT WITH STREAMLIT APP:
+-- - All queries match the enhanced data_layer.py methods
+-- - Consistent use of CORTEX_FUNCTIONS_USAGE_HISTORY for reconciliation
+-- - Same specialized function mapping and "OTHER" handling
+-- - Individual function names in time series (TRANSLATE, COMPLETE, etc.)
 -- =============================================================================
