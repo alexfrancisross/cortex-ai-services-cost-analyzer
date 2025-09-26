@@ -315,12 +315,19 @@ class SnowflakeDataLoader:
     def get_model_token_analysis(self, start_date, end_date) -> pd.DataFrame:
         """
         Get detailed token and credit analysis by model.
-        Enhanced pattern from cortex-monitoring-dashboard.py.
+        Enhanced to handle empty model names and provide function context.
         """
         try:
             query = f"""
             SELECT 
-                MODEL_NAME,
+                CASE 
+                    WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'Specialized Functions'
+                    ELSE MODEL_NAME
+                END as MODEL_NAME,
+                CASE 
+                    WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'SPECIALIZED'
+                    ELSE 'EXPLICIT_MODEL'
+                END as MODEL_TYPE,
                 COUNT(*) as invocations,
                 SUM(TOKENS) as total_tokens,
                 SUM(TOKEN_CREDITS) as total_credits,
@@ -331,7 +338,15 @@ class SnowflakeDataLoader:
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
             WHERE START_TIME >= '{start_date}'::date
                 AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY MODEL_NAME
+            GROUP BY 
+                CASE 
+                    WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'Specialized Functions'
+                    ELSE MODEL_NAME
+                END,
+                CASE 
+                    WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'SPECIALIZED'
+                    ELSE 'EXPLICIT_MODEL'
+                END
             ORDER BY total_credits DESC
             """
             
@@ -340,6 +355,178 @@ class SnowflakeDataLoader:
             
         except Exception as e:
             st.warning(f"Could not get model token analysis: {str(e)}")
+            return pd.DataFrame()
+    
+    @monitor_db_operation("get_specialized_functions_analysis")
+    def get_specialized_functions_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get detailed analysis of Cortex functions that don't specify explicit models.
+        These are functions like TRANSLATE, CLASSIFY_TEXT, SENTIMENT, etc.
+        """
+        try:
+            query = f"""
+            SELECT 
+                CASE 
+                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'OTHER'
+                    ELSE FUNCTION_NAME
+                END as FUNCTION_NAME,
+                CASE 
+                    WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'Translation Services'
+                    WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'Text Classification'
+                    WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'Sentiment Analysis'
+                    WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'Text Summarization'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'Text Embeddings'
+                    WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'Answer Extraction'
+                    WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI Information Extraction'
+                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other'
+                    ELSE 'Other'
+                END as FUNCTION_DESCRIPTION,
+                COUNT(*) as invocations,
+                SUM(TOKENS) as total_tokens,
+                SUM(TOKEN_CREDITS) as total_credits,
+                AVG(TOKENS) as avg_tokens_per_call,
+                AVG(TOKEN_CREDITS) as avg_credits_per_call,
+                NULLIF(SUM(TOKENS) / NULLIF(SUM(TOKEN_CREDITS), 0), 0) as tokens_per_credit,
+                ROUND(100 * SUM(TOKEN_CREDITS) / NULLIF((
+                    SELECT SUM(TOKEN_CREDITS) 
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY 
+                    WHERE START_TIME >= '{start_date}'::date
+                        AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+                        AND (MODEL_NAME = '' OR MODEL_NAME IS NULL)
+                ), 0), 2) as pct_of_specialized_credits,
+                MIN(START_TIME) as first_usage,
+                MAX(START_TIME) as last_usage
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
+            WHERE START_TIME >= '{start_date}'::date
+                AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+                AND (MODEL_NAME = '' OR MODEL_NAME IS NULL)
+            GROUP BY 
+                CASE 
+                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'OTHER'
+                    ELSE FUNCTION_NAME
+                END,
+                CASE 
+                    WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'Translation Services'
+                    WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'Text Classification'
+                    WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'Sentiment Analysis'
+                    WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'Text Summarization'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'Text Embeddings'
+                    WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'Answer Extraction'
+                    WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI Information Extraction'
+                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other'
+                    ELSE 'Other'
+                END
+            ORDER BY total_credits DESC
+            """
+            
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+            
+        except Exception as e:
+            st.warning(f"Could not get specialized functions analysis: {str(e)}")
+            return pd.DataFrame()
+    
+    @monitor_db_operation("get_cortex_analyst_analysis")
+    def get_cortex_analyst_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get detailed analysis of Cortex Analyst usage.
+        Cortex Analyst provides REST API access for data analysis.
+        """
+        try:
+            query = f"""
+            SELECT 
+                COUNT(*) as total_requests,
+                SUM(CREDITS) as total_credits,
+                AVG(CREDITS) as avg_credits_per_request,
+                ROUND(100 * SUM(CREDITS) / NULLIF((
+                    SELECT SUM(CREDITS) 
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY 
+                    WHERE START_TIME >= '{start_date}'::date
+                        AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+                ), 0), 2) as pct_of_total_credits,
+                MIN(START_TIME) as first_usage,
+                MAX(START_TIME) as last_usage,
+                COUNT(DISTINCT USERNAME) as unique_users
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
+            WHERE START_TIME >= '{start_date}'::date
+                AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+            """
+            
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+            
+        except Exception as e:
+            st.warning(f"Could not get Cortex Analyst analysis: {str(e)}")
+            return pd.DataFrame()
+    
+    @monitor_db_operation("get_document_processing_analysis")
+    def get_document_processing_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get detailed analysis of Cortex Document Processing usage.
+        Modern document AI for processing various document types.
+        """
+        try:
+            query = f"""
+            SELECT 
+                COUNT(*) as total_operations,
+                SUM(CREDITS_USED) as total_credits,
+                AVG(CREDITS_USED) as avg_credits_per_operation,
+                COALESCE(SUM(DOCUMENT_COUNT), 0) as total_documents,
+                COALESCE(SUM(PAGE_COUNT), 0) as total_pages,
+                COALESCE(AVG(DOCUMENT_COUNT), 0) as avg_documents_per_operation,
+                COALESCE(AVG(PAGE_COUNT), 0) as avg_pages_per_operation,
+                ROUND(100 * SUM(CREDITS_USED) / NULLIF((
+                    SELECT SUM(CREDITS_USED) 
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY 
+                    WHERE START_TIME >= '{start_date}'::date
+                        AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+                ), 0), 2) as pct_of_total_credits,
+                MIN(START_TIME) as first_usage,
+                MAX(START_TIME) as last_usage,
+                COUNT(DISTINCT QUERY_ID) as unique_queries
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
+            WHERE START_TIME >= '{start_date}'::date
+                AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+            """
+            
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+            
+        except Exception as e:
+            st.warning(f"Could not get Document Processing analysis: {str(e)}")
+            return pd.DataFrame()
+    
+    @monitor_db_operation("get_search_serving_analysis")
+    def get_search_serving_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get detailed analysis of Cortex Search Serving usage.
+        Vector search operations for semantic search capabilities.
+        """
+        try:
+            query = f"""
+            SELECT 
+                COUNT(*) as total_operations,
+                SUM(CREDITS) as total_credits,
+                AVG(CREDITS) as avg_credits_per_operation,
+                ROUND(100 * SUM(CREDITS) / NULLIF((
+                    SELECT SUM(CREDITS) 
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY 
+                    WHERE START_TIME >= '{start_date}'::date
+                        AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+                ), 0), 2) as pct_of_total_credits,
+                MIN(START_TIME) as first_usage,
+                MAX(START_TIME) as last_usage,
+                COUNT(DISTINCT SERVICE_NAME) as unique_services
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+            WHERE START_TIME >= '{start_date}'::date
+                AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+            """
+            
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+            
+        except Exception as e:
+            st.warning(f"Could not get Search Serving analysis: {str(e)}")
             return pd.DataFrame()
     
     @monitor_db_operation("get_ai_services_reconciliation")
@@ -732,15 +919,73 @@ class SnowflakeDataLoader:
         
         query = f"""
         WITH all_time_series AS (
-            -- Cortex Functions Usage
+            -- Specialized Functions (individual breakdown)
             SELECT 
                 {date_trunc} as period,
-                'CORTEX_FUNCTIONS_USAGE' as service_type,
+                CASE 
+                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
+                        CASE 
+                            WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
+                            ELSE 'Other Specialized'
+                        END
+                    WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
+                    WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
+                    WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
+                    WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'SUMMARIZE'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
+                    WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
+                    WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
+                    ELSE 'Other Specialized'
+                END as service_type,
                 SUM(COALESCE(token_credits, 0)) as credits
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
             WHERE start_time >= '{start_date}'::date
               AND start_time < '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY {date_trunc}
+              AND (MODEL_NAME IS NULL OR MODEL_NAME = '')  -- Only specialized functions
+            GROUP BY {date_trunc}, 
+                CASE 
+                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
+                        CASE 
+                            WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
+                            ELSE 'Other Specialized'
+                        END
+                    WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
+                    WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
+                    WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
+                    WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'SUMMARIZE'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
+                    WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
+                    WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
+                    ELSE 'Other Specialized'
+                END
+            
+            UNION ALL
+            
+            -- Explicit Model Functions (individual breakdown)
+            SELECT 
+                {date_trunc} as period,
+                CASE 
+                    WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
+                    WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
+                    WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
+                    ELSE 'Other Explicit'
+                END as service_type,
+                SUM(COALESCE(token_credits, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
+            WHERE start_time >= '{start_date}'::date
+              AND start_time < '{end_date}'::date + INTERVAL '1 day'
+              AND (MODEL_NAME IS NOT NULL AND MODEL_NAME != '')  -- Only explicit model functions
+            GROUP BY {date_trunc}, 
+                CASE 
+                    WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
+                    WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
+                    WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
+                    ELSE 'Other Explicit'
+                END
             
             UNION ALL
             

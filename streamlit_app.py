@@ -35,12 +35,19 @@ def get_snowflake_session():
     Returns: (session, deployment_mode) tuple
     """
     try:
-        # Try to get active session first (SiS environment)
-        from snowflake.snowpark.context import get_active_session
-        session = get_active_session()
-        # Test the session with a simple query to ensure it's working
-        session.sql("SELECT CURRENT_VERSION()").collect()
-        return session, 'SiS'
+        # Check if we're actually in a SiS environment first
+        # SiS environment will have specific environment variables
+        import os
+        if os.getenv('SNOWFLAKE_WAREHOUSE') or os.getenv('SNOWFLAKE_DATABASE') or 'snowflake-streamlit' in os.getcwd().lower():
+            # We're likely in SiS environment
+            from snowflake.snowpark.context import get_active_session
+            session = get_active_session()
+            # Test the session with a simple query to ensure it's working
+            session.sql("SELECT CURRENT_VERSION()").collect()
+            return session, 'SiS'
+        else:
+            # Not in SiS environment, go directly to standalone
+            return _get_standalone_session()
     except Exception:
         # Fallback to standalone mode with key-pair authentication
         return _get_standalone_session()
@@ -149,8 +156,17 @@ def apply_snowflake_chart_styling(fig, title=None):
     return fig
 
 def get_snowflake_colors():
-    """Return Snowflake brand color palette"""
-    return ['#29B5E8', '#11567F', '#75CDD7', '#FF9F36', '#7254A3', '#D45B90']
+    """Return official Snowflake brand color palette from style guide"""
+    return [
+        '#29B5E8',  # Snowflake Blue (primary)
+        '#11567F',  # Mid-Blue
+        '#75CDD7',  # Star Blue
+        '#FF9F36',  # Valencia Orange
+        '#7254A3',  # Purple Moon
+        '#D45B90',  # Firstlight
+        '#5B5B5B',  # Medium Gray
+        '#000000'   # Midnight (black)
+    ]
 
 @st.cache_data
 @time_it("load_custom_css")
@@ -521,7 +537,7 @@ def main():
             st.metric(
                 "Individual Services Total", 
                 format_credits(summary_data['total_individual']),
-                help="Sum of all individual Cortex service tables"
+                help="Sum of all individual Cortex service tables:\n• CORTEX_FUNCTIONS_USAGE_HISTORY\n• CORTEX_ANALYST_USAGE_HISTORY\n• CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY\n• CORTEX_SEARCH_SERVING_USAGE_HISTORY"
             )
         
         with col3:
@@ -539,50 +555,6 @@ def main():
             status_color = get_status_color(status)
             st.markdown(f'<h3 style="color: {status_color};">{status}</h3>', unsafe_allow_html=True)
     
-        # Service breakdown
-        st.markdown('<h3 class="section-header">💰 Service Breakdown</h3>', unsafe_allow_html=True)
-        
-        individual_services = summary_data.get('individual_services', {})
-        if individual_services:
-            # Create DataFrame for visualization
-            service_data = []
-            for service, credits in individual_services.items():
-                service_data.append({
-                    'Service': service,
-                    'Credits': float(credits),
-                    'Percentage': (float(credits) / summary_data['total_individual'] * 100) if summary_data['total_individual'] > 0 else 0
-                })
-            
-            df_services = pd.DataFrame(service_data)
-            df_services = df_services.sort_values('Credits', ascending=False)
-            
-            # Display as chart and table
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                if not df_services.empty:
-                    fig = px.pie(
-                        df_services, 
-                        values='Credits', 
-                        names='Service',
-                        title="Credit Distribution by Service",
-                        color_discrete_sequence=get_snowflake_colors()
-                    )
-                    fig.update_traces(
-                        textposition='inside', 
-                        textinfo='percent+label',
-                        textfont_size=12,
-                        marker=dict(line=dict(color='#FFFFFF', width=2))
-                    )
-                    apply_snowflake_chart_styling(fig)
-                    st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                # Format the DataFrame for display
-                display_df = df_services.copy()
-                display_df['Credits'] = display_df['Credits'].apply(format_credits)
-                display_df['Percentage'] = display_df['Percentage'].apply(lambda x: f"{x:.2f}%")
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
     else:
         st.warning("No reconciliation data available for the selected date range.")
         st.info("This might be because:")
@@ -591,67 +563,30 @@ def main():
         st.info("• Data latency (ACCOUNT_USAGE views have up to 3-hour delay)")
     
     # Enhanced Detailed Analysis Section
-    st.markdown('<h2 class="section-header">📈 Enhanced Detailed Analysis</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="section-header">📈 Detailed Analysis</h2>', unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4 = st.tabs(["Model Analysis", "Service Details", "Time Series", "Raw Data"])
     
     with tab1:
         # Model-level token analysis
-        st.subheader("🤖 Model Token & Credit Analysis")
-        
         with st.spinner('Loading model analysis...'):
             try:
                 with measure_time("model_analysis_load"):
                     model_analysis = data_loader.get_model_token_analysis(start_date, end_date)
+                    specialized_functions = data_loader.get_specialized_functions_analysis(start_date, end_date)
                 
                 if not model_analysis.empty:
-                    col1, col2 = st.columns(2)
+                    # Split data by model type
+                    explicit_models = model_analysis[model_analysis['MODEL_TYPE'] == 'EXPLICIT_MODEL']
+                    specialized_entry = model_analysis[model_analysis['MODEL_TYPE'] == 'SPECIALIZED']
                     
-                    with col1:
-                        # Credits by model pie chart
-                        fig = px.pie(
-                            model_analysis,
-                            values="TOTAL_CREDITS",
-                            names="MODEL_NAME",
-                            title="Credit Distribution by Model",
-                            hole=0.4,
-                            color_discrete_sequence=get_snowflake_colors()
-                        )
-                        fig.update_traces(
-                            textposition="inside", 
-                            textinfo="percent+label",
-                            textfont_size=12,
-                            marker=dict(line=dict(color='#FFFFFF', width=2))
-                        )
-                        apply_snowflake_chart_styling(fig)
-                        st.plotly_chart(fig, use_container_width=True)
-
-                    with col2:
-                        # Efficiency comparison
-                        fig = px.bar(
-                            model_analysis,
-                            x="MODEL_NAME",
-                            y="TOKENS_PER_CREDIT",
-                            title="Tokens per Credit by Model (Efficiency)",
-                            text="TOKENS_PER_CREDIT",
-                            color_discrete_sequence=['#29B5E8']
-                        )
-                        fig.update_traces(
-                            texttemplate="%{text:.0f}",
-                            marker_color='#29B5E8',
-                            marker_line_color='#11567F',
-                            marker_line_width=1
-                        )
-                        fig.update_xaxes(tickangle=45)
-                        apply_snowflake_chart_styling(fig)
-                        st.plotly_chart(fig, use_container_width=True)
-
-                    # Token usage metrics
-                    st.subheader("📊 Token Usage Metrics")
+                    # Overview metrics - ONLY for models
+                    st.subheader("🤖 Model Utilisation", help="Analysis of model usage including tokens, invocations, and credit consumption")
                     col1, col2, col3, col4 = st.columns(4)
 
-                    total_tokens = model_analysis["TOTAL_TOKENS"].sum()
-                    total_invocations = model_analysis["INVOCATIONS"].sum()
+                    total_tokens = explicit_models["TOTAL_TOKENS"].sum()
+                    total_invocations = explicit_models["INVOCATIONS"].sum()
+                    total_credits = explicit_models['TOTAL_CREDITS'].sum()
                     avg_tokens_per_call = (
                         total_tokens / total_invocations if total_invocations > 0 else 0
                     )
@@ -663,21 +598,293 @@ def main():
                     with col3:
                         st.metric("Avg Tokens/Call", f"{avg_tokens_per_call:.1f}")
                     with col4:
-                        st.metric("Total Credits", f"{model_analysis['TOTAL_CREDITS'].sum():.2f}")
+                        st.metric("Total Credits", f"{total_credits:.2f}")
+                    
+                    # Visual analysis - ONLY models
+                    st.subheader("🎯 Models Distribution", help="Visual breakdown showing credit distribution and efficiency metrics across different models")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Show only models in the pie chart
+                        if not explicit_models.empty:
+                            # Official Snowflake color palette from style guide
+                            snowflake_colors = [
+                                '#29B5E8',  # Snowflake Blue (primary)
+                                '#11567F',  # Mid-Blue
+                                '#75CDD7',  # Star Blue
+                                '#FF9F36',  # Valencia Orange
+                                '#7254A3',  # Purple Moon
+                                '#D45B90',  # Firstlight
+                                '#5B5B5B',  # Medium Gray
+                                '#000000'   # Midnight (black)
+                            ]
+                            
+                            # Create extended palette with variations for more segments
+                            extended_palette = [
+                                '#29B5E8',  # Snowflake Blue
+                                '#11567F',  # Mid-Blue
+                                '#75CDD7',  # Star Blue
+                                '#FF9F36',  # Valencia Orange
+                                '#7254A3',  # Purple Moon
+                                '#D45B90',  # Firstlight
+                                '#5B5B5B',  # Medium Gray
+                                '#4DC2E8',  # Lighter Snowflake Blue
+                                '#2B6F9F',  # Lighter Mid-Blue
+                                '#95DDE7',  # Lighter Star Blue
+                                '#FFB856',  # Lighter Valencia Orange
+                                '#9274C3'   # Lighter Purple Moon
+                            ]
+                            
+                            # Assign colors sequentially using official Snowflake palette
+                            colors = []
+                            for i, _ in enumerate(explicit_models.iterrows()):
+                                colors.append(extended_palette[i % len(extended_palette)])
+                            
+                            # Create the pie chart with explicit color mapping
+                            fig = px.pie(
+                                explicit_models,
+                                values="TOTAL_CREDITS",
+                                names="MODEL_NAME",
+                                title="Model Credit Distribution",
+                                hole=0.4
+                            )
+                            
+                            # Manually set colors using update_traces
+                            fig.update_traces(
+                                textposition="inside", 
+                                textinfo="percent+label",
+                                textfont_size=10,
+                                marker=dict(
+                                    colors=colors,
+                                    line=dict(color='#FFFFFF', width=2)
+                                )
+                            )
+                            apply_snowflake_chart_styling(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No explicit model data available for the selected period.")
 
-                    # Detailed model table
-                    st.subheader("📋 Detailed Model Breakdown")
-                    display_df = model_analysis.copy()
+                    with col2:
+                        # Efficiency comparison for models only
+                        if not explicit_models.empty:
+                            fig = px.bar(
+                                explicit_models,
+                                x="MODEL_NAME",
+                                y="TOKENS_PER_CREDIT",
+                                title="Model Efficiency (Tokens per Credit)",
+                                text="TOKENS_PER_CREDIT",
+                                color_discrete_sequence=['#29B5E8']
+                            )
+                            fig.update_traces(
+                                texttemplate="%{text:.0f}",
+                                marker_color='#29B5E8',
+                                marker_line_color='#11567F',
+                                marker_line_width=1
+                            )
+                            fig.update_xaxes(tickangle=45)
+                            apply_snowflake_chart_styling(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No models found - only specialized functions used in this period.")
+
+                    # Model breakdown
+                    if not explicit_models.empty:
+                        st.subheader("📋 Model Breakdown", help="Detailed table showing all model usage statistics including tokens, credits, and efficiency metrics")
+                        display_df = explicit_models.copy()
+                        
+                        # Remove MODEL_TYPE column for display
+                        if 'MODEL_TYPE' in display_df.columns:
+                            display_df = display_df.drop('MODEL_TYPE', axis=1)
+                        
+                        # Format numeric columns
+                        for col in ['TOTAL_TOKENS', 'TOTAL_CREDITS', 'AVG_TOKENS_PER_CALL', 'AVG_CREDITS_PER_CALL']:
+                            if col in display_df.columns:
+                                display_df[col] = display_df[col].apply(lambda x: f"{x:,.3f}" if x < 1 else f"{x:,.2f}")
+                        
+                        st.dataframe(display_df, use_container_width=True, hide_index=True)
                     
-                    # Format numeric columns
-                    for col in ['TOTAL_TOKENS', 'TOTAL_CREDITS', 'AVG_TOKENS_PER_CALL', 'AVG_CREDITS_PER_CALL']:
-                        if col in display_df.columns:
-                            display_df[col] = display_df[col].apply(lambda x: f"{x:,.3f}" if x < 1 else f"{x:,.2f}")
+                    # Add divider between Model breakdown and Specialized functions
+                    if not explicit_models.empty and not specialized_functions.empty:
+                        st.markdown("---")
                     
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    # Specialized functions breakdown
+                    if not specialized_functions.empty:
+                        st.subheader("🔧 Specialized Functions Breakdown", help="Functions like TRANSLATE, CLASSIFY_TEXT, SENTIMENT that don't specify model names")
+                        
+                        # Specialized Functions KPIs
+                        col1, col2, col3, col4 = st.columns(4)
+
+                        spec_total_tokens = specialized_functions["TOTAL_TOKENS"].sum()
+                        spec_total_invocations = specialized_functions["INVOCATIONS"].sum()
+                        spec_total_credits = specialized_functions['TOTAL_CREDITS'].sum()
+                        spec_avg_tokens_per_call = (
+                            spec_total_tokens / spec_total_invocations if spec_total_invocations > 0 else 0
+                        )
+
+                        with col1:
+                            st.metric("Total Tokens", f"{spec_total_tokens:,.0f}")
+                        with col2:
+                            st.metric("Total Invocations", f"{spec_total_invocations:,.0f}")
+                        with col3:
+                            st.metric("Avg Tokens/Call", f"{spec_avg_tokens_per_call:.1f}")
+                        with col4:
+                            st.metric("Total Credits", f"{spec_total_credits:.2f}")
+                        
+                        # Function details chart
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            fig = px.pie(
+                                specialized_functions,
+                                values="TOTAL_CREDITS",
+                                names="FUNCTION_NAME",
+                                title="Specialized Functions Credit Distribution",
+                                color_discrete_sequence=get_snowflake_colors()
+                            )
+                            fig.update_traces(
+                                textposition="inside", 
+                                textinfo="percent+label",
+                                textfont_size=10,
+                                marker=dict(line=dict(color='#FFFFFF', width=2))
+                            )
+                            apply_snowflake_chart_styling(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col2:
+                            # Function efficiency - match colors from pie chart
+                            # Create color mapping to match the pie chart legend
+                            snowflake_palette = get_snowflake_colors()
+                            bar_colors = []
+                            for i, _ in enumerate(specialized_functions.iterrows()):
+                                bar_colors.append(snowflake_palette[i % len(snowflake_palette)])
+                            
+                            fig = px.bar(
+                                specialized_functions,
+                                x="FUNCTION_NAME",
+                                y="TOKENS_PER_CREDIT",
+                                title="Function Efficiency (Tokens per Credit)",
+                                text="TOKENS_PER_CREDIT",
+                                color_discrete_sequence=bar_colors
+                            )
+                            fig.update_traces(
+                                texttemplate="%{text:.0f}",
+                                marker_line_color='#FFFFFF',  # White border for contrast
+                                marker_line_width=1
+                            )
+                            fig.update_xaxes(tickangle=45)
+                            apply_snowflake_chart_styling(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Detailed functions table
+                        display_functions = specialized_functions.copy()
+                        
+                        # Format numeric columns
+                        for col in ['TOTAL_TOKENS', 'TOTAL_CREDITS', 'AVG_TOKENS_PER_CALL', 'AVG_CREDITS_PER_CALL']:
+                            if col in display_functions.columns:
+                                display_functions[col] = display_functions[col].apply(lambda x: f"{x:,.3f}" if x < 1 else f"{x:,.2f}")
+                        
+                        # Format date columns
+                        for col in ['FIRST_USAGE', 'LAST_USAGE']:
+                            if col in display_functions.columns:
+                                display_functions[col] = pd.to_datetime(display_functions[col]).dt.strftime('%Y-%m-%d %H:%M')
+                        
+                        st.dataframe(display_functions, use_container_width=True, hide_index=True)
+                        
+                    
                     
                 else:
                     st.info("No model usage data available for the selected period.")
+                
+                # Add the three additional service sections
+                st.markdown("---")
+                
+                # Cortex Analyst Section
+                try:
+                    analyst_analysis = data_loader.get_cortex_analyst_analysis(start_date, end_date)
+                    
+                    if not analyst_analysis.empty and analyst_analysis.iloc[0]['TOTAL_CREDITS'] > 0:
+                        st.subheader("🤖 Cortex Analyst", help="REST API access for advanced data analysis and insights generation")
+                        
+                        analyst_row = analyst_analysis.iloc[0]
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Total Requests", f"{int(analyst_row['TOTAL_REQUESTS']):,}")
+                        with col2:
+                            st.metric("Total Credits", f"{analyst_row['TOTAL_CREDITS']:.2f}")
+                        with col3:
+                            st.metric("Avg Credits/Request", f"{analyst_row['AVG_CREDITS_PER_REQUEST']:.3f}")
+                        with col4:
+                            st.metric("Unique Users", f"{int(analyst_row['UNIQUE_USERS']):,}")
+                    
+                except Exception as e:
+                    st.warning(f"Could not load Cortex Analyst data: {str(e)}")
+                
+                # Add divider between service sections
+                st.markdown("---")
+                
+                # Document Processing Section  
+                try:
+                    doc_analysis = data_loader.get_document_processing_analysis(start_date, end_date)
+                    
+                    if not doc_analysis.empty and doc_analysis.iloc[0]['TOTAL_CREDITS'] > 0:
+                        st.subheader("📄 Document AI", help="Modern document AI for extracting insights from various document types")
+                        
+                        doc_row = doc_analysis.iloc[0]
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Total Operations", f"{int(doc_row['TOTAL_OPERATIONS']):,}")
+                        with col2:
+                            st.metric("Total Credits", f"{doc_row['TOTAL_CREDITS']:.2f}")
+                        with col3:
+                            total_docs = doc_row['TOTAL_DOCUMENTS'] if doc_row['TOTAL_DOCUMENTS'] is not None else 0
+                            st.metric("Documents Processed", f"{int(total_docs):,}")
+                        with col4:
+                            total_pages = doc_row['TOTAL_PAGES'] if doc_row['TOTAL_PAGES'] is not None else 0
+                            st.metric("Pages Processed", f"{int(total_pages):,}")
+                        
+                        # Additional metrics row
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Avg Credits/Operation", f"{doc_row['AVG_CREDITS_PER_OPERATION']:.3f}")
+                        with col2:
+                            avg_docs = doc_row['AVG_DOCUMENTS_PER_OPERATION'] if doc_row['AVG_DOCUMENTS_PER_OPERATION'] is not None else 0
+                            st.metric("Avg Docs/Operation", f"{avg_docs:.1f}")
+                        with col3:
+                            avg_pages = doc_row['AVG_PAGES_PER_OPERATION'] if doc_row['AVG_PAGES_PER_OPERATION'] is not None else 0
+                            st.metric("Avg Pages/Operation", f"{avg_pages:.1f}")
+                        with col4:
+                            st.metric("Unique Queries", f"{int(doc_row['UNIQUE_QUERIES']):,}")
+                    
+                except Exception as e:
+                    st.warning(f"Could not load Document Processing data: {str(e)}")
+                
+                # Add divider between service sections
+                st.markdown("---")
+                
+                # Search Serving Section
+                try:
+                    search_analysis = data_loader.get_search_serving_analysis(start_date, end_date)
+                    
+                    if not search_analysis.empty and search_analysis.iloc[0]['TOTAL_CREDITS'] > 0:
+                        st.subheader("🔍 Cortex Search", help="Vector search operations for semantic search and similarity matching")
+                        
+                        search_row = search_analysis.iloc[0]
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Total Operations", f"{int(search_row['TOTAL_OPERATIONS']):,}")
+                        with col2:
+                            st.metric("Total Credits", f"{search_row['TOTAL_CREDITS']:.3f}")
+                        with col3:
+                            st.metric("Avg Credits/Operation", f"{search_row['AVG_CREDITS_PER_OPERATION']:.4f}")
+                        with col4:
+                            st.metric("Unique Services", f"{int(search_row['UNIQUE_SERVICES']):,}")
+                    
+                except Exception as e:
+                    st.warning(f"Could not load Search Serving data: {str(e)}")
+                    
             except Exception as e:
                 st.error(f"Error loading model analysis: {str(e)}")
                 st.info("Model analysis requires CORTEX_FUNCTIONS_USAGE_HISTORY table access.")
@@ -704,6 +911,11 @@ def main():
                     for service in service_breakdown['service_type'].unique():
                         service_data = service_breakdown[service_breakdown['service_type'] == service]
                         if not service_data.empty and service_data.iloc[0]['total_credits'] > 0:
+                            # Skip CORTEX_FUNCTIONS_USAGE as it's covered by CORTEX_FUNCTIONS_QUERY
+                            if service == 'CORTEX_FUNCTIONS_USAGE':
+                                continue
+                            
+                            # Standard service display
                             with st.expander(f"🔍 {service} Details"):
                                 st.write(f"**Granularity**: {service_data.iloc[0].get('granularity', 'Unknown')}")
                                 st.write(f"**Records**: {service_data.iloc[0].get('record_count', 0):,}")
@@ -727,13 +939,26 @@ def main():
                     time_series_data = data_loader.get_time_series_data(start_date, end_date, granularity.lower())
                 
                 if not time_series_data.empty:
+                    # Check if specialized functions are present in the data
+                    specialized_functions = time_series_data[time_series_data['service_type'].isin([
+                        'TRANSLATE', 'CLASSIFY_TEXT', 'SENTIMENT', 
+                        'SUMMARIZE', 'EMBED_TEXT', 'EXTRACT_ANSWER', 
+                        'AI_EXTRACT', 'Other Specialized'
+                    ])]
+                    
+                    # Check if explicit model functions are present  
+                    explicit_model_functions = time_series_data[time_series_data['service_type'].isin([
+                        'COMPLETE', 'EMBED_TEXT_768', 'EMBED_TEXT_1024', 
+                        'FINETUNE', 'COUNT_TOKENS', 'Other Explicit'
+                    ])]
+                    
                     # Create time series chart with Snowflake branding
                     fig = px.line(
                         time_series_data, 
                         x='period', 
                         y='credits', 
                         color='service_type',
-                        title=f"{granularity} AI Services Usage Trends",
+                        title=f"{granularity} AI Services Usage Trends - Individual Function Breakdown",
                         labels={'credits': 'Credits Used', 'period': 'Period'},
                         color_discrete_sequence=get_snowflake_colors()
                     )
@@ -747,6 +972,7 @@ def main():
                     if len(total_by_period) > 1:
                         peak_usage = total_by_period.loc[total_by_period['credits'].idxmax()]
                         st.info(f"📊 **Peak Usage**: {peak_usage['period']} ({format_credits(peak_usage['credits'])} credits)")
+                    
                 else:
                     st.info("No time series data available for the selected period.")
             except Exception as e:
@@ -827,7 +1053,9 @@ def main():
     # Cache clearing for troubleshooting
     if st.sidebar.button("🗑️ Clear Session Cache", help="Clear cached Snowflake session (useful for connection issues)"):
         st.cache_resource.clear()
-        st.session_state['deployment_mode'] = 'Unknown'
+        # Clear deployment mode to force re-detection
+        if 'deployment_mode' in st.session_state:
+            del st.session_state['deployment_mode']
         st.success("Session cache cleared. Please refresh the page.")
         st.rerun()
     

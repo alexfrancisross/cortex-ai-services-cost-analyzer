@@ -8,8 +8,8 @@
 -- =============================================================================
 
 -- Set date range variables (adjust as needed)
-SET start_date = '2024-06-01';
-SET end_date = '2025-09-08';
+SET start_date = '2024-06-28';
+SET end_date = '2025-09-26';
 
 -- =============================================================================
 -- 1. AI SERVICES RECONCILIATION ANALYSIS
