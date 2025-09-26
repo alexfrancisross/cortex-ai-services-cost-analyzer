@@ -35,12 +35,14 @@ WITH ai_baseline AS (
 ),
 individual_services AS (
     -- Cortex Functions Usage (LLM token-based usage)
+    -- Exclude AI_EXTRACT to prevent double counting with CORTEX_DOCUMENT_PROCESSING
     SELECT 
         'CORTEX_FUNCTIONS_USAGE' as service,
         COALESCE(SUM(token_credits), 0) as credits
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
+      AND function_name != 'AI_EXTRACT'
     
     UNION ALL
     
@@ -55,9 +57,16 @@ individual_services AS (
     UNION ALL
     
     -- Document AI (legacy, pre-Cortex document processing)
+    -- Only include if modern CORTEX_DOCUMENT_PROCESSING has no data to prevent double counting
     SELECT 
         'DOCUMENT_AI' as service,
-        COALESCE(SUM(credits_used), 0) as credits
+        CASE 
+            WHEN (SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY 
+                  WHERE start_time >= $start_date::date 
+                    AND start_time < $end_date::date + INTERVAL '1 day') > 0 
+            THEN 0 
+            ELSE COALESCE(SUM(credits_used), 0) 
+        END as credits
     FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'

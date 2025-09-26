@@ -57,28 +57,3 @@ def get_status_color(status: str) -> str:
     """
     return STATUS_CONFIG.get(status.upper(), STATUS_CONFIG['UNKNOWN'])['color']
 
-def calculate_percentage_change(old_value: Union[float, int, None], 
-                              new_value: Union[float, int, None]) -> Union[float, None]:
-    """
-    Calculate percentage change between two values.
-    
-    Args:
-        old_value: Original value
-        new_value: New value
-        
-    Returns:
-        Percentage change or None if calculation not possible
-    """
-    if old_value is None or new_value is None:
-        return None
-    
-    try:
-        old_value = float(old_value)
-        new_value = float(new_value)
-        
-        if old_value == 0:
-            return 100.0 if new_value != 0 else 0.0
-        
-        return ((new_value - old_value) / old_value) * 100
-    except (ValueError, TypeError, ZeroDivisionError):
-        return None

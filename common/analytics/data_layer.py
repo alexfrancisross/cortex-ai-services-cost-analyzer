@@ -436,14 +436,14 @@ class SnowflakeDataLoader:
             query = f"""
             SELECT 
                 COUNT(*) as total_requests,
-                SUM(CREDITS) as total_credits,
-                AVG(CREDITS) as avg_credits_per_request,
-                ROUND(100 * SUM(CREDITS) / NULLIF((
+                COALESCE(SUM(CREDITS), 0) as total_credits,
+                COALESCE(AVG(CREDITS), 0) as avg_credits_per_request,
+                COALESCE(ROUND(100 * SUM(CREDITS) / NULLIF((
                     SELECT SUM(CREDITS) 
                     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY 
                     WHERE START_TIME >= '{start_date}'::date
                         AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
-                ), 0), 2) as pct_of_total_credits,
+                ), 0), 2), 0) as pct_of_total_credits,
                 MIN(START_TIME) as first_usage,
                 MAX(START_TIME) as last_usage,
                 COUNT(DISTINCT USERNAME) as unique_users
@@ -506,14 +506,14 @@ class SnowflakeDataLoader:
             query = f"""
             SELECT 
                 COUNT(*) as total_operations,
-                SUM(CREDITS) as total_credits,
-                AVG(CREDITS) as avg_credits_per_operation,
-                ROUND(100 * SUM(CREDITS) / NULLIF((
+                COALESCE(SUM(CREDITS), 0) as total_credits,
+                COALESCE(AVG(CREDITS), 0) as avg_credits_per_operation,
+                COALESCE(ROUND(100 * SUM(CREDITS) / NULLIF((
                     SELECT SUM(CREDITS) 
                     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY 
                     WHERE START_TIME >= '{start_date}'::date
                         AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
-                ), 0), 2) as pct_of_total_credits,
+                ), 0), 2), 0) as pct_of_total_credits,
                 MIN(START_TIME) as first_usage,
                 MAX(START_TIME) as last_usage,
                 COUNT(DISTINCT SERVICE_NAME) as unique_services
@@ -662,6 +662,8 @@ class SnowflakeDataLoader:
                 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
                 WHERE start_time >= '{start_date}'::date
                   AND start_time < '{end_date}'::date + INTERVAL '1 day'
+                  -- Exclude AI_EXTRACT to prevent double counting with CORTEX_DOCUMENT_PROCESSING
+                  AND function_name != 'AI_EXTRACT'
                 
                 UNION ALL
                 
@@ -674,9 +676,17 @@ class SnowflakeDataLoader:
                 
                 UNION ALL
                 
+                -- Only include legacy DOCUMENT_AI if modern CORTEX_DOCUMENT_PROCESSING has no data
+                -- This prevents double counting of document processing services
                 SELECT 
                     'DOCUMENT_AI' as service,
-                    COALESCE(SUM(credits_used), 0) as credits
+                    CASE 
+                        WHEN (SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY 
+                              WHERE start_time >= '{start_date}'::date 
+                                AND start_time < '{end_date}'::date + INTERVAL '1 day') > 0 
+                        THEN 0 
+                        ELSE COALESCE(SUM(credits_used), 0) 
+                    END as credits
                 FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
                 WHERE start_time >= '{start_date}'::date
                   AND start_time < '{end_date}'::date + INTERVAL '1 day'

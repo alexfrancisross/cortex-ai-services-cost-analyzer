@@ -34,23 +34,33 @@ def get_snowflake_session():
     Get Snowflake session - either from SiS (get_active_session) or standalone (connector)
     Returns: (session, deployment_mode) tuple
     """
+    # First, always try SiS (Streamlit in Snowflake) mode
     try:
-        # Check if we're actually in a SiS environment first
-        # SiS environment will have specific environment variables
-        import os
-        if os.getenv('SNOWFLAKE_WAREHOUSE') or os.getenv('SNOWFLAKE_DATABASE') or 'snowflake-streamlit' in os.getcwd().lower():
-            # We're likely in SiS environment
-            from snowflake.snowpark.context import get_active_session
-            session = get_active_session()
-            # Test the session with a simple query to ensure it's working
-            session.sql("SELECT CURRENT_VERSION()").collect()
-            return session, 'SiS'
-        else:
-            # Not in SiS environment, go directly to standalone
+        from snowflake.snowpark.context import get_active_session
+        session = get_active_session()
+        # Test the session with a simple query to ensure it's working
+        session.sql("SELECT CURRENT_VERSION()").collect()
+        return session, 'SiS'
+    except Exception as sis_error:
+        # If SiS fails, fall back to standalone mode
+        st.info("Streamlit in Snowflake session not available, trying standalone mode...")
+        try:
             return _get_standalone_session()
-    except Exception:
-        # Fallback to standalone mode with key-pair authentication
-        return _get_standalone_session()
+        except Exception as standalone_error:
+            st.error("Failed to establish Snowflake connection in both SiS and standalone modes")
+            st.error(f"SiS Error: {str(sis_error)}")
+            st.error(f"Standalone Error: {str(standalone_error)}")
+            st.info("""
+            **This app is designed to run in Streamlit in Snowflake (SiS).**
+            
+            If you're seeing this error in SiS:
+            1. Ensure the app was deployed using `snow streamlit deploy`
+            2. Check that your Snowflake account has Cortex AI Services enabled
+            3. Verify you have the required permissions (see README.md)
+            
+            For standalone mode, ensure `~/.snowflake/config.toml` is configured with JWT key-pair authentication.
+            """)
+            st.stop()
 
 def _get_standalone_session():
     """Helper for standalone session creation with caching. Returns (session, mode) tuple."""
@@ -119,7 +129,7 @@ def _get_standalone_session():
 # Import custom modules from common library
 try:
     from common.analytics import SnowflakeDataLoader, ReconciliationEngine
-    from common.utils import format_credits, get_status_color, calculate_percentage_change
+    from common.utils import format_credits, get_status_color
 except ImportError as e:
     st.error(f"Module import error: {e}")
     st.info("Please ensure all required modules are deployed with the application.")
@@ -802,7 +812,7 @@ def main():
                 try:
                     analyst_analysis = data_loader.get_cortex_analyst_analysis(start_date, end_date)
                     
-                    if not analyst_analysis.empty and analyst_analysis.iloc[0]['TOTAL_CREDITS'] > 0:
+                    if not analyst_analysis.empty and (analyst_analysis.iloc[0]['TOTAL_CREDITS'] or 0) > 0:
                         st.subheader("🤖 Cortex Analyst", help="REST API access for advanced data analysis and insights generation")
                         
                         analyst_row = analyst_analysis.iloc[0]
@@ -828,7 +838,7 @@ def main():
                     doc_analysis = data_loader.get_document_processing_analysis(start_date, end_date)
                     
                     if not doc_analysis.empty and doc_analysis.iloc[0]['TOTAL_CREDITS'] > 0:
-                        st.subheader("📄 Document AI", help="Modern document AI for extracting insights from various document types")
+                        st.subheader("📄 Document Processing & AI_EXTRACT", help="Modern document processing including AI_EXTRACT functions, document parsing, and content analysis")
                         
                         doc_row = doc_analysis.iloc[0]
                         col1, col2, col3, col4 = st.columns(4)
@@ -867,7 +877,7 @@ def main():
                 try:
                     search_analysis = data_loader.get_search_serving_analysis(start_date, end_date)
                     
-                    if not search_analysis.empty and search_analysis.iloc[0]['TOTAL_CREDITS'] > 0:
+                    if not search_analysis.empty and (search_analysis.iloc[0]['TOTAL_CREDITS'] or 0) > 0:
                         st.subheader("🔍 Cortex Search", help="Vector search operations for semantic search and similarity matching")
                         
                         search_row = search_analysis.iloc[0]

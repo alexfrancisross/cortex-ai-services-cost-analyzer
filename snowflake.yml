@@ -23,7 +23,6 @@ entities:
       - "common/analytics/__init__.py"
       - "common/analytics/data_layer.py"
       - "common/analytics/reconciliation.py"
-      - "common/components/__init__.py"
       - "common/utils/__init__.py"
       - "common/utils/data_helpers.py"
       - "common/utils/performance_monitor.py"
