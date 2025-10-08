@@ -1,23 +1,27 @@
 -- =============================================================================
--- CORTEX AI SERVICES COST ANALYSIS (Enhanced with Individual Function Breakdown)
+-- CORTEX AI SERVICES COST ANALYSIS
 -- =============================================================================
 -- This script provides all insights from the Cortex Cost Analyzer Streamlit app
 -- Includes: Reconciliation, Enhanced Model Analysis, Specialized Functions, 
 --          Individual Service Analysis, Time Series with Function Breakdown, Raw Data
 -- 
--- New Features:
+-- VERIFIED: All queries tested with Snowflake CLI and match data_layer.py exactly
+-- 
+-- Key Features:
+-- - AI_EXTRACT excluded from CORTEX_FUNCTIONS to prevent double counting
 -- - Individual specialized function breakdown (TRANSLATE, CLASSIFY_TEXT, etc.)
 -- - Explicit model vs specialized function separation
--- - Cortex Analyst, Document AI, and Cortex Search analysis
--- - Enhanced time series with individual function lines
+-- - Cortex Analyst, Document Processing, and Cortex Search analysis
+-- - Time series with individual function breakdown
+-- - Query-level tracking with CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY
 -- 
 -- Author: Alex Ross
--- Date: 2025-09-26 (Updated to match Streamlit app v2.0)
+-- Date: 2025-10-08 (Verified against Streamlit app current version)
 -- =============================================================================
 
 -- Set date range variables (adjust as needed)
-SET start_date = '2024-06-28';
-SET end_date = '2025-09-26';
+SET start_date = '2024-09-01';
+SET end_date = '2024-09-26';
 
 -- =============================================================================
 -- 1. AI SERVICES RECONCILIATION ANALYSIS
@@ -253,7 +257,7 @@ ORDER BY total_credits DESC;
 -- Insights: Service adoption, cost distribution, optimization targets
 
 WITH service_breakdown AS (
-    -- Cortex Functions Usage
+    -- Cortex Functions Usage (Token-based LLM functions)
     SELECT 
         'CORTEX_FUNCTIONS_USAGE' as service_type,
         'Token-based LLM function calls' as description,
@@ -638,9 +642,10 @@ ORDER BY dts.period DESC, dts.credits DESC;
 -- 5. DETAILED RAW DATA EXPORT (LIMITED TO 1000 RECORDS)
 -- =============================================================================
 -- Purpose: Provide granular transaction-level data for deep analysis
--- Note: Limited to 1000 records for performance - adjust as needed
+-- Note: Limited to records for performance - adjust as needed
+-- Matches get_raw_export_data() from data_layer.py
 
--- Cortex Functions Query Usage (Most detailed - query level)
+-- Cortex Functions Query Usage (Most detailed - query level with user attribution)
 SELECT 
     '5a. RAW DATA - CORTEX_FUNCTIONS_QUERY' as analysis_type,
     cfq.query_id,
@@ -789,39 +794,12 @@ FROM summary_stats ss
 CROSS JOIN cost_distribution cd;
 
 -- =============================================================================
--- SCRIPT EXECUTION SUMMARY
--- =============================================================================
--- Purpose: Confirm successful execution and provide usage guidance
-
-SELECT 
-    'SCRIPT EXECUTION COMPLETE' as status,
-    CURRENT_TIMESTAMP() as execution_time,
-    $start_date as analysis_start_date,
-    $end_date as analysis_end_date,
-    DATEDIFF('day', $start_date::date, $end_date::date) as analysis_period_days,
-    'All enhanced insights from Cortex Cost Analyzer Streamlit app v2.0 have been generated - includes individual function breakdown' as message;
-
--- =============================================================================
 -- USAGE NOTES:
 -- =============================================================================
--- 1. Adjust the date range variables at the top of the script
+-- 1. Adjust the date range variables at the top of the script (lines 23-24)
 -- 2. Run individual sections as needed for focused analysis
 -- 3. Export results to CSV for further analysis or reporting
 -- 4. Use analysis_type column to filter results by section
--- 5. Reconciliation variance should be < 5% for accurate billing
+-- 5. Reconciliation variance should be ≤1% (EXCELLENT), ≤2% (GOOD), ≤5% (WARNING)
 -- 6. High-cost calls (>0.1 credits) may indicate optimization opportunities
--- 
--- ENHANCED FEATURES IN THIS VERSION:
--- - Section 2a: Explicit models vs specialized functions breakdown
--- - Section 2b: Individual specialized function analysis (TRANSLATE, CLASSIFY_TEXT, etc.)
--- - Section 2c: Cortex Analyst REST API analysis
--- - Section 2d: Document AI processing analysis
--- - Section 2e: Cortex Search vector operations analysis
--- - Section 4: Time series with individual function breakdown instead of aggregated services
--- 
--- ALIGNMENT WITH STREAMLIT APP:
--- - All queries match the enhanced data_layer.py methods
--- - Consistent use of CORTEX_FUNCTIONS_USAGE_HISTORY for reconciliation
--- - Same specialized function mapping and "OTHER" handling
--- - Individual function names in time series (TRANSLATE, COMPLETE, etc.)
 -- =============================================================================

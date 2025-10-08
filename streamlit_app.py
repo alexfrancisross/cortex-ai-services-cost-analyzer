@@ -512,6 +512,36 @@ def main():
     
     # Main Dashboard Content
     st.markdown('<h2 class="section-header">📊 Reconciliation Summary</h2>', unsafe_allow_html=True)
+    
+    # Combined Documentation & Resources Expander
+    with st.expander("📚 Documentation & Resources", expanded=False):
+        st.markdown("""
+        **Billing & Metering:**
+        - [Learn about metering](https://docs.snowflake.com/en/user-guide/cost-understanding-compute) - Understanding compute costs
+        - [Account Usage Views](https://docs.snowflake.com/en/sql-reference/account-usage) - Usage monitoring views
+        - [Snowflake Services Consumption Table](https://www.snowflake.com/legal-files/CreditConsumptionTable.pdf) - Credit consumption rates
+        
+        **Core Cortex AI Services:**
+        - [Cortex AI Overview](https://docs.snowflake.com/en/user-guide/snowflake-cortex/overview) - Complete Cortex AI platform overview
+        - [Cortex LLM Functions](https://docs.snowflake.com/en/user-guide/snowflake-cortex/llm-functions) - COMPLETE, EMBED, COUNT_TOKENS, etc.
+        - [Cortex AISQL](https://docs.snowflake.com/en/user-guide/snowflake-cortex/aisql) - Plain-language data queries
+        - [Snowflake Copilot](https://docs.snowflake.com/en/user-guide/snowflake-copilot) - Conversational AI for structured data
+        - [Cortex Analyst](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst) - Build conversational data applications
+        - [Cortex Search](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-search/cortex-search-overview) - Semantic search over Snowflake data
+        - [Cortex Fine-Tuning](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-finetuning) - Customize LLMs for your use case
+        
+        **Document Processing:**
+        - [Document AI](https://docs.snowflake.com/en/user-guide/snowflake-cortex/document-ai/overview) - Extract data from PDFs and documents
+        - [AI_EXTRACT Function](https://docs.snowflake.com/en/sql-reference/functions/ai_extract) - Extract structured data from documents
+        
+        **Specialized Functions:**
+        - [TRANSLATE](https://docs.snowflake.com/en/sql-reference/functions/translate-snowflake-cortex) - Language translation
+        - [CLASSIFY_TEXT](https://docs.snowflake.com/en/sql-reference/functions/classify_text-snowflake-cortex) - Text classification
+        - [SENTIMENT](https://docs.snowflake.com/en/sql-reference/functions/sentiment-snowflake-cortex) - Sentiment analysis
+        - [SUMMARIZE](https://docs.snowflake.com/en/sql-reference/functions/summarize-snowflake-cortex) - Text summarization
+        - [EXTRACT_ANSWER](https://docs.snowflake.com/en/sql-reference/functions/extract_answer-snowflake-cortex) - Question answering
+        """)
+    
     st.markdown(f"**Analysis Period:** {start_date.strftime('%B %d, %Y')} - {end_date.strftime('%B %d, %Y')}")
     
     # Get reconciliation data with caching and progress indicator
@@ -590,7 +620,7 @@ def main():
                     specialized_entry = model_analysis[model_analysis['MODEL_TYPE'] == 'SPECIALIZED']
                     
                     # Overview metrics - ONLY for models
-                    st.subheader("🤖 Model Utilisation", help="Analysis of model usage including tokens, invocations, and credit consumption")
+                    st.subheader("🤖 Model Utilisation", help="Analysis of LLM model usage including tokens, invocations, and credit consumption.\n\n📚 [Learn more about Cortex LLM Functions](https://docs.snowflake.com/en/user-guide/snowflake-cortex/llm-functions)")
                     col1, col2, col3, col4 = st.columns(4)
 
                     total_tokens = explicit_models["TOTAL_TOKENS"].sum()
@@ -718,7 +748,7 @@ def main():
                     
                     # Specialized functions breakdown
                     if not specialized_functions.empty:
-                        st.subheader("🔧 Specialized Functions Breakdown", help="Functions like TRANSLATE, CLASSIFY_TEXT, SENTIMENT that don't specify model names")
+                        st.subheader("🔧 Specialized Functions Breakdown", help="Functions like TRANSLATE, CLASSIFY_TEXT, SENTIMENT that don't specify model names.\n\n📚 [View all specialized functions](https://docs.snowflake.com/en/user-guide/snowflake-cortex/llm-functions#label-cortex-llm-specialized-functions)")
                         
                         # Specialized Functions KPIs
                         col1, col2, col3, col4 = st.columns(4)
@@ -809,7 +839,7 @@ def main():
                 st.info("Model analysis requires CORTEX_FUNCTIONS_USAGE_HISTORY table access.")
     
     with tab2:
-        st.subheader("🔧 Service Details & Breakdown", help="Detailed breakdown of all Snowflake Cortex AI services including CORTEX_FUNCTIONS_QUERY, CORTEX_ANALYST, CORTEX_DOCUMENT_PROCESSING, DOCUMENT_AI, CORTEX_SEARCH_SERVING, and CORTEX_FINE_TUNING")
+        st.subheader("🔧 Service Details & Breakdown", help="Detailed breakdown of all Snowflake Cortex AI services.\n\n📚 [Cortex AI Overview](https://docs.snowflake.com/en/user-guide/snowflake-cortex/overview)")
         
         with st.spinner('Loading service details...'):
             try:
