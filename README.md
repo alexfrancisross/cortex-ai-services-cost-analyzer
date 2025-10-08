@@ -8,47 +8,6 @@ A cost analysis and reconciliation dashboard for **Snowflake Cortex AI Services*
 
 ![Demo](img/demo.gif)
 
-## 🚀 Key Features
-
-### 📊 Advanced Reconciliation Analysis
-- **AI Services Baseline** vs **Individual Services** reconciliation with 99.98% accuracy
-- **Smart Double-Counting Prevention**: Eliminates AI_EXTRACT and Document AI overlaps
-- **Variance analysis** to identify billing discrepancies with precise thresholds
-- **Real-time reconciliation status** monitoring (EXCELLENT ≤1%, GOOD 1-2%, WARNING 2-5%, CRITICAL >5%)
-- **Multi-tier reconciliation**: Organization, Account, and Service-level validation
-
-### 🤖 Enhanced Model & Function Analysis
-- **Specialized Functions Analysis**: Clear breakdown of TRANSLATE, CLASSIFY_TEXT, SENTIMENT, etc.
-- **Model Utilization**: Token usage and credit consumption by explicit LLM models
-- **AI_EXTRACT Integration**: Properly categorized under Document Processing to prevent duplication
-- **Efficiency metrics**: Tokens per credit for models and functions
-- **Color-coded visualizations**: Orange for specialized functions, blue for explicit models
-
-### 📈 Comprehensive Service Breakdown
-- **Document Processing & AI_EXTRACT**: Combined modern document processing analytics
-- **Cortex Analyst**: REST API access analytics with request-level insights
-- **Cortex Search**: Vector search operations with service-level metrics
-- **Cortex Functions**: LLM/AI functions with individual breakdowns (excluding AI_EXTRACT)
-- **Fine Tuning**: Model customization services tracking
-
-### 📈 Time Series Analytics
-- **Individual function trend lines** for detailed analysis
-- **Daily and hourly usage patterns** with peak identification
-- **Service-specific consumption tracking** across all Cortex services
-- **Function-level granularity** for precise usage analysis
-
-### 📋 Production-Ready Data Export
-- **Raw data export** in CSV and Excel formats
-- **Unified TOTAL_CREDITS column** across all exports
-- **Performance-optimized** data retrieval with intelligent caching
-- **Comprehensive usage reports** with accurate credit calculations
-
-### 🔧 Performance & Monitoring
-- **Advanced caching** with configurable TTL (30-minute default)
-- **Performance monitoring** with detailed execution metrics
-- **Memory usage tracking** and optimization
-- **Query execution monitoring** with timing analysis
-
 ## 🛠️ Prerequisites
 
 ### Snowflake Requirements
@@ -120,30 +79,12 @@ snow streamlit deploy cortex_cost_analyzer
 # Update existing deployment
 snow streamlit deploy cortex_cost_analyzer --replace
 
-# Remove old files from stage during deployment
-snow streamlit deploy cortex_cost_analyzer --replace --prune
-
 # Deploy to specific connection
 snow streamlit deploy cortex_cost_analyzer --replace -c production
 
 # Check deployment status
 snow streamlit list
 snow streamlit describe cortex_cost_analyzer
-```
-
-### Multi-Account Deployment
-
-Deploy to different Snowflake accounts using named connections:
-```bash
-# Setup multiple connections
-snow connection add -n development
-snow connection add -n staging  
-snow connection add -n production
-
-# Deploy to each environment
-snow streamlit deploy cortex_cost_analyzer --replace -c development
-snow streamlit deploy cortex_cost_analyzer --replace -c staging
-snow streamlit deploy cortex_cost_analyzer --replace -c production
 ```
 
 ### Run Locally (Development)
@@ -259,25 +200,6 @@ entities:
 - `cryptography` - JWT authentication for secure connections
 - `toml` - Configuration file parsing
 
-## 📊 Data Sources & Smart Processing
-
-### Primary Tables
-1. **METERING_HISTORY**: Overall AI Services baseline credits with service type filtering
-2. **CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY**: Query-level LLM usage with user attribution (most detailed)
-3. **CORTEX_ANALYST_USAGE_HISTORY**: Business intelligence queries and analytics requests
-4. **CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY**: Modern document processing operations
-5. **CORTEX_SEARCH_SERVING_USAGE_HISTORY**: Vector search operations and semantic search
-6. **CORTEX_FINE_TUNING_USAGE_HISTORY**: Model fine-tuning and customization services
-7. **DOCUMENT_AI_USAGE_HISTORY**: Legacy document processing (auto-excluded when modern data exists)
-
-### Advanced Reconciliation Logic
-1. **Optimized Single-Query Reconciliation**: Uses CTEs for 70% performance improvement over sequential queries
-2. **Smart Service Aggregation**: Prevents double counting between legacy and modern services
-3. **AI_EXTRACT Deduplication**: Excludes AI_EXTRACT from Cortex Functions to prevent overlap with Document Processing
-4. **Baseline Comparison**: Compares individual service sum against AI_SERVICES metering baseline
-5. **Variance Calculation**: Precise percentage calculation with status classification
-6. **Multi-Tier Validation**: Organization, Account, and Service-level reconciliation
-
 ### Service Table Configurations
 The application intelligently handles different credit column names and granularities:
 
@@ -289,12 +211,6 @@ The application intelligently handles different credit column names and granular
 | **Cortex Search Serving** | CORTEX_SEARCH_SERVING_USAGE_HISTORY | CREDITS | Hourly by service |
 | **Cortex Fine Tuning** | CORTEX_FINE_TUNING_USAGE_HISTORY | TOKEN_CREDITS | Training session |
 | **Cortex Document Processing** | CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY | CREDITS_USED | Document processing |
-
-### Status Thresholds
-- **EXCELLENT** (≤1%): Perfect reconciliation
-- **GOOD** (1-2%): Minor variance within acceptable range
-- **WARNING** (2-5%): Moderate variance requiring attention
-- **CRITICAL** (>5%): Significant variance requiring investigation
 
 ## 🔍 Advanced Troubleshooting
 
@@ -356,65 +272,12 @@ The `sql/cortex_credit_consumption_analysis.sql` file provides standalone SQL an
 - **`snowflake.yml`**: Snowflake CLI configuration for deployment
 - **`environment.yml`**: Conda environment with dependencies
 - **`setup.sql`**: Database initialization and permissions script
-
-## 🔄 Recent Improvements (Latest Version)
-
-### ✅ Query Performance Optimization
-- **Single-Query Reconciliation**: Consolidated CTE-based queries achieve 70% performance improvement
-- **Optimized Time Series**: Single consolidated query with 65% performance gain
-- **Enhanced Caching**: Increased TTL to 30 minutes for better performance
-- **Query Monitoring**: Built-in performance tracking for database operations
-
-### ✅ Double Counting Prevention
-- **AI_EXTRACT Deduplication**: Eliminates double counting between Cortex Functions and Document Processing
-- **Legacy Service Exclusion**: Automatically excludes legacy Document AI when modern data exists
-- **Query-Level Tracking**: Uses CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY for most detailed attribution
-
-### ✅ Enhanced Model Analysis
-- **Specialized Functions Clarity**: Dedicated sections for TRANSLATE, CLASSIFY_TEXT, SENTIMENT, etc.
-- **Function-Level Time Series**: Individual trend lines for each specialized function
-- **Improved Visualizations**: Snowflake color palette with matching legends
-- **Educational Content**: Inline documentation links to official Snowflake docs
-
-### ✅ Production-Ready Architecture
-- **Comprehensive Error Handling**: Graceful degradation with informative error messages
-- **Dual Deployment Mode**: Seamless support for SiS and standalone modes
-- **Performance Dashboard**: Built-in monitoring with bottleneck identification
-- **Memory Tracking**: Real-time memory usage monitoring and optimization
-
 ## 🆘 Support & Resources
 
 ### Documentation
 - [Snowflake Cortex AI Documentation](https://docs.snowflake.com/en/guides-overview-ai-features) - Complete Cortex AI overview
 - [Snowflake CLI Documentation](https://docs.snowflake.com/en/developer-guide/snowflake-cli/index) - CLI usage and commands
 - [Account Usage Views](https://docs.snowflake.com/en/sql-reference/account-usage) - System usage monitoring
-
-### Troubleshooting
-- **Built-in Debug Mode**: Enable "Show Performance Debug" in sidebar for detailed metrics
-- **Performance Dashboard**: Monitor query times, memory usage, and bottlenecks
-- **Connection Testing**: Use the connectivity test feature in admin panel
-- **Data Freshness**: Check ACCOUNT_USAGE views have 2-3 hour latency
-
-## 📈 Performance & Scalability
-
-### Query Optimization
-- **Single-Query Architecture**: Consolidated CTEs eliminate sequential query overhead (70% faster)
-- **Intelligent Caching**: 30-minute TTL with @st.cache_data decorators
-- **Query Monitoring**: Built-in performance tracking with execution metrics
-- **Optimized Joins**: Efficient data retrieval with minimal Snowflake compute
-
-### Application Performance
-- **Component Caching**: Session-level caching for Snowflake connections and data loaders
-- **Memory Management**: Real-time tracking with psutil monitoring
-- **Progressive Loading**: Spinner indicators with background data loading
-- **Bottleneck Identification**: Performance dashboard highlights slow operations
-
-### Scalability
-- **Multi-Account Support**: Tested across AWS, Azure, and GCP Snowflake deployments
-- **Large Dataset Handling**: Optimized for 90+ day analysis periods
-- **Concurrent Users**: Session isolation in Streamlit in Snowflake mode
-- **Production Ready**: Enterprise-validated with comprehensive error handling
-
 ---
 
-*Production-ready cost analysis for Snowflake Cortex AI Services with advanced reconciliation and zero double counting.*
+*Cost analysis for Snowflake Cortex AI Services with advanced reconciliation.*

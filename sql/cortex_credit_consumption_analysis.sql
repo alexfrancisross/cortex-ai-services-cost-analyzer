@@ -5,7 +5,6 @@
 -- Includes: Reconciliation, Enhanced Model Analysis, Specialized Functions, 
 --          Individual Service Analysis, Time Series with Function Breakdown, Raw Data
 -- 
--- VERIFIED: All queries tested with Snowflake CLI and match data_layer.py exactly
 -- 
 -- Key Features:
 -- - AI_EXTRACT excluded from CORTEX_FUNCTIONS to prevent double counting
@@ -16,7 +15,7 @@
 -- - Query-level tracking with CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY
 -- 
 -- Author: Alex Ross
--- Date: 2025-10-08 (Verified against Streamlit app current version)
+-- Date: 2025-10-08
 -- =============================================================================
 
 -- Set date range variables (adjust as needed)
@@ -801,5 +800,4 @@ CROSS JOIN cost_distribution cd;
 -- 3. Export results to CSV for further analysis or reporting
 -- 4. Use analysis_type column to filter results by section
 -- 5. Reconciliation variance should be ≤1% (EXCELLENT), ≤2% (GOOD), ≤5% (WARNING)
--- 6. High-cost calls (>0.1 credits) may indicate optimization opportunities
--- =============================================================================
+-- 6. High-cost calls (>0.1 credits) may indicate optimization opportunities=============================================================================
