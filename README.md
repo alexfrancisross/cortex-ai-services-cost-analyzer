@@ -12,7 +12,7 @@ A cost analysis and reconciliation dashboard for **Snowflake Cortex AI Services*
 
 ### Snowflake Requirements
 - Snowflake account with **Cortex AI Services enabled**
-- **Snowflake CLI** (version 2.0 or higher recommended)
+- **Snowflake CLI**
 - Access to `SNOWFLAKE.ACCOUNT_USAGE` views:
   - `METERING_HISTORY` (AI Services baseline for reconciliation)
   - `CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY` (Query-level LLM function usage with user attribution)
