@@ -415,6 +415,8 @@ class SnowflakeDataLoader:
                     WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'Text Embeddings'
                     WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'Answer Extraction'
                     WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI Information Extraction'
+                    WHEN FUNCTION_NAME = 'AI_AGG' THEN 'AI Aggregation'
+                    WHEN FUNCTION_NAME = 'AI_CLASSIFY' THEN 'AI Classification'
                     WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other'
                     ELSE 'Other'
                 END

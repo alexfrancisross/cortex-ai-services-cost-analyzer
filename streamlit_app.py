@@ -803,103 +803,13 @@ def main():
                     
                 else:
                     st.info("No model usage data available for the selected period.")
-                
-                # Add the three additional service sections
-                st.markdown("---")
-                
-                # Cortex Analyst Section
-                try:
-                    analyst_analysis = data_loader.get_cortex_analyst_analysis(start_date, end_date)
-                    
-                    if not analyst_analysis.empty and (analyst_analysis.iloc[0]['TOTAL_CREDITS'] or 0) > 0:
-                        st.subheader("🤖 Cortex Analyst", help="REST API access for advanced data analysis and insights generation")
-                        
-                        analyst_row = analyst_analysis.iloc[0]
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        with col1:
-                            st.metric("Total Requests", f"{int(analyst_row['TOTAL_REQUESTS']):,}")
-                        with col2:
-                            st.metric("Total Credits", f"{analyst_row['TOTAL_CREDITS']:.2f}")
-                        with col3:
-                            st.metric("Avg Credits/Request", f"{analyst_row['AVG_CREDITS_PER_REQUEST']:.3f}")
-                        with col4:
-                            st.metric("Unique Users", f"{int(analyst_row['UNIQUE_USERS']):,}")
-                    
-                except Exception as e:
-                    st.warning(f"Could not load Cortex Analyst data: {str(e)}")
-                
-                # Add divider between service sections
-                st.markdown("---")
-                
-                # Document Processing Section  
-                try:
-                    doc_analysis = data_loader.get_document_processing_analysis(start_date, end_date)
-                    
-                    if not doc_analysis.empty and doc_analysis.iloc[0]['TOTAL_CREDITS'] > 0:
-                        st.subheader("📄 Document Processing & AI_EXTRACT", help="Modern document processing including AI_EXTRACT functions, document parsing, and content analysis")
-                        
-                        doc_row = doc_analysis.iloc[0]
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        with col1:
-                            st.metric("Total Operations", f"{int(doc_row['TOTAL_OPERATIONS']):,}")
-                        with col2:
-                            st.metric("Total Credits", f"{doc_row['TOTAL_CREDITS']:.2f}")
-                        with col3:
-                            total_docs = doc_row['TOTAL_DOCUMENTS'] if doc_row['TOTAL_DOCUMENTS'] is not None else 0
-                            st.metric("Documents Processed", f"{int(total_docs):,}")
-                        with col4:
-                            total_pages = doc_row['TOTAL_PAGES'] if doc_row['TOTAL_PAGES'] is not None else 0
-                            st.metric("Pages Processed", f"{int(total_pages):,}")
-                        
-                        # Additional metrics row
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Avg Credits/Operation", f"{doc_row['AVG_CREDITS_PER_OPERATION']:.3f}")
-                        with col2:
-                            avg_docs = doc_row['AVG_DOCUMENTS_PER_OPERATION'] if doc_row['AVG_DOCUMENTS_PER_OPERATION'] is not None else 0
-                            st.metric("Avg Docs/Operation", f"{avg_docs:.1f}")
-                        with col3:
-                            avg_pages = doc_row['AVG_PAGES_PER_OPERATION'] if doc_row['AVG_PAGES_PER_OPERATION'] is not None else 0
-                            st.metric("Avg Pages/Operation", f"{avg_pages:.1f}")
-                        with col4:
-                            st.metric("Unique Queries", f"{int(doc_row['UNIQUE_QUERIES']):,}")
-                    
-                except Exception as e:
-                    st.warning(f"Could not load Document Processing data: {str(e)}")
-                
-                # Add divider between service sections
-                st.markdown("---")
-                
-                # Search Serving Section
-                try:
-                    search_analysis = data_loader.get_search_serving_analysis(start_date, end_date)
-                    
-                    if not search_analysis.empty and (search_analysis.iloc[0]['TOTAL_CREDITS'] or 0) > 0:
-                        st.subheader("🔍 Cortex Search", help="Vector search operations for semantic search and similarity matching")
-                        
-                        search_row = search_analysis.iloc[0]
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        with col1:
-                            st.metric("Total Operations", f"{int(search_row['TOTAL_OPERATIONS']):,}")
-                        with col2:
-                            st.metric("Total Credits", f"{search_row['TOTAL_CREDITS']:.3f}")
-                        with col3:
-                            st.metric("Avg Credits/Operation", f"{search_row['AVG_CREDITS_PER_OPERATION']:.4f}")
-                        with col4:
-                            st.metric("Unique Services", f"{int(search_row['UNIQUE_SERVICES']):,}")
-                    
-                except Exception as e:
-                    st.warning(f"Could not load Search Serving data: {str(e)}")
                     
             except Exception as e:
                 st.error(f"Error loading model analysis: {str(e)}")
                 st.info("Model analysis requires CORTEX_FUNCTIONS_USAGE_HISTORY table access.")
     
     with tab2:
-        st.subheader("🔧 Service Details & Breakdown")
+        st.subheader("🔧 Service Details & Breakdown", help="Detailed breakdown of all Snowflake Cortex AI services including CORTEX_FUNCTIONS_QUERY, CORTEX_ANALYST, CORTEX_DOCUMENT_PROCESSING, DOCUMENT_AI, CORTEX_SEARCH_SERVING, and CORTEX_FINE_TUNING")
         
         with st.spinner('Loading service details...'):
             try:
@@ -940,7 +850,7 @@ def main():
                 st.error(f"Error loading service breakdown: {str(e)}")
     
     with tab3:
-        st.subheader(f"📈 Usage Trends ({granularity})")
+        st.subheader(f"📈 Usage Trends ({granularity})", help="Time series analysis showing credit consumption trends over time with individual function breakdown for models and specialized functions")
         
         with st.spinner('Loading time series data...'):
             try:
@@ -952,13 +862,13 @@ def main():
                     specialized_functions = time_series_data[time_series_data['service_type'].isin([
                         'TRANSLATE', 'CLASSIFY_TEXT', 'SENTIMENT', 
                         'SUMMARIZE', 'EMBED_TEXT', 'EXTRACT_ANSWER', 
-                        'AI_EXTRACT', 'Other Specialized'
+                        'AI_EXTRACT', 'AI_AGG', 'AI_CLASSIFY', 'Other Specialized'
                     ])]
                     
                     # Check if explicit model functions are present  
                     explicit_model_functions = time_series_data[time_series_data['service_type'].isin([
                         'COMPLETE', 'EMBED_TEXT_768', 'EMBED_TEXT_1024', 
-                        'FINETUNE', 'COUNT_TOKENS', 'Other Explicit'
+                        'EMBED_TEXT_EXPLICIT', 'FINETUNE', 'COUNT_TOKENS', 'Other Explicit'
                     ])]
                     
                     # Create time series chart with Snowflake branding
@@ -988,7 +898,7 @@ def main():
                 st.error(f"Error loading time series analysis: {str(e)}")
     
     with tab4:
-        st.subheader("📋 Raw Data Export")
+        st.subheader("📋 Raw Data Export", help="Export detailed raw data from all Cortex services in CSV or Excel format for further analysis")
         
         with st.spinner('Loading raw data...'):
             try:
