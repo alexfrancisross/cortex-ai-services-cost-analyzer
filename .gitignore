@@ -1,3 +1,4 @@
+output/
 docs/
 archive/
 # Byte-compiled / optimized / DLL files
@@ -205,3 +206,4 @@ credentials.json
 # Backup files
 *.bak
 *.backup
+output/

@@ -43,7 +43,6 @@ def get_snowflake_session():
         return session, 'SiS'
     except Exception as sis_error:
         # If SiS fails, fall back to standalone mode
-        st.info("Streamlit in Snowflake session not available, trying standalone mode...")
         try:
             return _get_standalone_session()
         except Exception as standalone_error:

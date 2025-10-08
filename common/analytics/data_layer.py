@@ -378,6 +378,8 @@ class SnowflakeDataLoader:
                     WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'Text Embeddings'
                     WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'Answer Extraction'
                     WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI Information Extraction'
+                    WHEN FUNCTION_NAME = 'AI_AGG' THEN 'AI Aggregation'
+                    WHEN FUNCTION_NAME = 'AI_CLASSIFY' THEN 'AI Classification'
                     WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other'
                     ELSE 'Other'
                 END as FUNCTION_DESCRIPTION,
@@ -945,6 +947,8 @@ class SnowflakeDataLoader:
                     WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
                     WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
                     WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
+                    WHEN FUNCTION_NAME = 'AI_AGG' THEN 'AI_AGG'
+                    WHEN FUNCTION_NAME = 'AI_CLASSIFY' THEN 'AI_CLASSIFY'
                     ELSE 'Other Specialized'
                 END as service_type,
                 SUM(COALESCE(token_credits, 0)) as credits
@@ -966,6 +970,8 @@ class SnowflakeDataLoader:
                     WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
                     WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
                     WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
+                    WHEN FUNCTION_NAME = 'AI_AGG' THEN 'AI_AGG'
+                    WHEN FUNCTION_NAME = 'AI_CLASSIFY' THEN 'AI_CLASSIFY'
                     ELSE 'Other Specialized'
                 END
             
@@ -978,6 +984,7 @@ class SnowflakeDataLoader:
                     WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
                     WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
                     WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT_EXPLICIT'
                     WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
                     WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
                     ELSE 'Other Explicit'
@@ -992,6 +999,7 @@ class SnowflakeDataLoader:
                     WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
                     WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
                     WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
+                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT_EXPLICIT'
                     WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
                     WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
                     ELSE 'Other Explicit'
