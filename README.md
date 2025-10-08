@@ -4,7 +4,7 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
 
-A cost analysis and reconciliation dashboard for **Snowflake Cortex AI Services**. Provides detailed insights into AI service consumption, billing reconciliation, and performance analytics with individual function breakdown and **advanced double-counting prevention**.
+A cost analysis and reconciliation dashboard for **Snowflake Cortex AI Services**. Provides detailed insights into AI service consumption, billing reconciliation, and performance analytics with individual function breakdown.
 
 ![Demo](img/demo.gif)
 
@@ -255,12 +255,6 @@ The application intelligently handles different credit column names and granular
 
 ### SQL Analysis Script
 The `sql/cortex_credit_consumption_analysis.sql` file provides standalone SQL analysis that mirrors the Streamlit app functionality:
-
-- **Enhanced reconciliation analysis** with double-counting prevention
-- **Individual specialized function breakdown** (TRANSLATE, CLASSIFY_TEXT, etc.)
-- **Cortex Analyst, Document Processing, and Cortex Search analysis**
-- **Time series with function-level granularity**
-- **Complete reconciliation validation** with variance analysis
 
 ### Key Components
 - **`streamlit_app.py`**: Main application entry point with Snowflake branding and enhanced UI
