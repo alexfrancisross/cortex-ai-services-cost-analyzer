@@ -928,7 +928,7 @@ def main():
                 total_code_requests = int(code_df['TOTAL_REQUESTS'].sum())
                 c1, c2 = st.columns(2)
                 c1.metric("Total Cortex Code Credits", f"{total_code_credits:,.4f}")
-                c2.metric("Total Requests", f"{total_code_requests:,}")
+                c2.metric("Total Code Requests", f"{total_code_requests:,}")
                 st.dataframe(code_df, use_container_width=True, hide_index=True)
             else:
                 st.info("No Cortex Code CLI usage in the selected period.")
