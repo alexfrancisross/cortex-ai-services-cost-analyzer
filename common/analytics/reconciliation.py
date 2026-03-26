@@ -31,7 +31,9 @@ class ReconciliationEngine:
             self.data_loader = SnowflakeDataLoader()
         else:
             raise ImportError("SnowflakeDataLoader not available")
-        
+
+        self._primary_view_count = len(self.data_loader.primary_views) if hasattr(self.data_loader, 'primary_views') else 6
+
         # Reconciliation thresholds based on testing results
         self.tolerance_thresholds = {
             'excellent': 1.0,    # ≤1% variance - excellent
@@ -284,9 +286,9 @@ class ReconciliationEngine:
             factors.append('incomplete_coverage')
         
         # Service accessibility
-        if accessible_services >= 6:
+        if accessible_services >= self._primary_view_count:
             factors.append('full_access')
-        elif accessible_services >= 4:
+        elif accessible_services >= max(1, int(self._primary_view_count * 0.67)):
             factors.append('partial_access')
         else:
             factors.append('limited_access')
@@ -353,9 +355,9 @@ class ReconciliationEngine:
         active_services = granular_data.get('active_services', 0)
         
         insights['data_quality'] = {
-            'accessible_services': f"{accessible_services}/6",
+            'accessible_services': f"{accessible_services}/{self._primary_view_count}",
             'active_services': active_services,
-            'data_completeness': 'Complete' if accessible_services == 6 else 'Partial'
+            'data_completeness': 'Complete' if accessible_services == self._primary_view_count else 'Partial'
         }
         
         # Service highlights
