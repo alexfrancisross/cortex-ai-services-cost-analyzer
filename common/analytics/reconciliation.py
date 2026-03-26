@@ -15,7 +15,7 @@ class ReconciliationEngine:
     Implements the proven 3-tier reconciliation methodology for Cortex AI Services.
     
     Based on testing results showing 99.98% reconciliation accuracy between
-    hourly metering and granular services across 6 service categories.
+    hourly metering and granular services across all configured service categories.
     """
     
     def __init__(self, data_loader: Optional[SnowflakeDataLoader] = None):
@@ -53,7 +53,7 @@ class ReconciliationEngine:
         
         Tier 1: Organization level (billing reconciliation baseline)
         Tier 2: Account hourly (hourly metering baseline) 
-        Tier 3: Granular services (sum of 6 service tables)
+        Tier 3: Granular services (sum of all configured service tables)
         
         Args:
             start_date: Start date for reconciliation period

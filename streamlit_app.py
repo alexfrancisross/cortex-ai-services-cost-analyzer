@@ -836,7 +836,7 @@ def main():
                     
             except Exception as e:
                 st.error(f"Error loading model analysis: {str(e)}")
-                st.info("Model analysis requires CORTEX_FUNCTIONS_USAGE_HISTORY table access.")
+                st.info("Model analysis requires CORTEX_AISQL_USAGE_HISTORY table access.")
     
     with tab2:
         st.subheader("🔧 Service Details & Breakdown", help="Detailed breakdown of all Snowflake Cortex AI services.\n\n📚 [Cortex AI Overview](https://docs.snowflake.com/en/user-guide/snowflake-cortex/overview)")
