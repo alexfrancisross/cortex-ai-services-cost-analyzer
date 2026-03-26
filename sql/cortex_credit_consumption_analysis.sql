@@ -811,8 +811,35 @@ WHERE start_time >= $start_date::date
 ORDER BY start_time DESC
 LIMIT 100;
 
--- =============================================================================
--- 6. SUMMARY STATISTICS & KEY INSIGHTS
+-- Cortex Agents Usage (GA Feb 25 2026)
+SELECT
+    '5f. RAW DATA - CORTEX_AGENT' as analysis_type,
+    start_time,
+    agent_name,
+    agent_database_name,
+    agent_schema_name,
+    token_credits,
+    -- Unified credit column
+    token_credits as total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
+WHERE start_time >= $start_date::date
+    AND start_time <= $end_date::date
+ORDER BY start_time DESC
+LIMIT 100;
+
+-- Snowflake Intelligence Usage (GA Feb 25 2026)
+SELECT
+    '5g. RAW DATA - SNOWFLAKE_INTELLIGENCE' as analysis_type,
+    start_time,
+    snowflake_intelligence_name,
+    token_credits,
+    -- Unified credit column
+    token_credits as total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
+WHERE start_time >= $start_date::date
+    AND start_time <= $end_date::date
+ORDER BY start_time DESC
+LIMIT 100;
 -- =============================================================================
 -- Purpose: High-level summary with actionable insights
 
@@ -871,4 +898,5 @@ CROSS JOIN cost_distribution cd;
 -- 3. Export results to CSV for further analysis or reporting
 -- 4. Use analysis_type column to filter results by section
 -- 5. Reconciliation variance should be ≤1% (EXCELLENT), ≤2% (GOOD), ≤5% (WARNING)
--- 6. High-cost calls (>0.1 credits) may indicate optimization opportunities=============================================================================
+-- 6. High-cost calls (>0.1 credits) may indicate optimization opportunities
+-- =============================================================================
