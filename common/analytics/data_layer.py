@@ -837,166 +837,144 @@ class SnowflakeDataLoader:
     
     def get_ai_services_reconciliation_optimized(self, start_date, end_date) -> Dict[str, Any]:
         """
-        Optimized reconciliation using single consolidated query with CTEs.
-        Expected 70% performance improvement over sequential queries.
-        TESTED: This query works correctly via Snowflake CLI.
+        Reconciliation using a single consolidated CTE query.
+        Tier 2 baseline: METERING_HISTORY AI_SERVICES.
+        Tier 3 granular: sum of all PRIMARY service views.
+        CORTEX_DOCUMENT_PROCESSING is FALLBACK (broken) — included for visibility but 0 in primary sum.
         """
         try:
             query = f"""
             WITH ai_baseline AS (
-                SELECT COALESCE(SUM(credits_used), 0) as total_credits
+                SELECT COALESCE(SUM(credits_used), 0) AS total_credits
                 FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
                 WHERE start_time >= '{start_date}'::date
-                  AND start_time < '{end_date}'::date + INTERVAL '1 day'
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
                   AND service_type = 'AI_SERVICES'
             ),
             individual_services AS (
-                SELECT 
-                    'CORTEX_FUNCTIONS_USAGE' as service,
-                    COALESCE(SUM(token_credits), 0) as credits
+                SELECT 'CORTEX_AI_FUNCTIONS' AS service,
+                       COALESCE(SUM(credits), 0) AS credits
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY
+                WHERE start_time >= '{start_date}'::date
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
+                UNION ALL
+                SELECT 'CORTEX_AISQL',
+                       COALESCE(SUM(token_credits), 0)
                 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
                 WHERE usage_time >= '{start_date}'::date
-                  AND usage_time < '{end_date}'::date + INTERVAL '1 day'
-                  -- Exclude AI_EXTRACT to prevent double counting with CORTEX_DOCUMENT_PROCESSING
-                  AND function_name != 'AI_EXTRACT'
-                
+                  AND usage_time <  '{end_date}'::date + INTERVAL '1 day'
                 UNION ALL
-                
-                SELECT 
-                    'CORTEX_ANALYST' as service,
-                    COALESCE(SUM(credits), 0) as credits
+                SELECT 'CORTEX_ANALYST',
+                       COALESCE(SUM(credits), 0)
                 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
                 WHERE start_time >= '{start_date}'::date
-                  AND start_time < '{end_date}'::date + INTERVAL '1 day'
-                
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
                 UNION ALL
-                
-                -- Only include legacy DOCUMENT_AI if modern CORTEX_DOCUMENT_PROCESSING has no data
-                -- This prevents double counting of document processing services
-                SELECT 
-                    'DOCUMENT_AI' as service,
-                    CASE 
-                        WHEN (SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY 
-                              WHERE start_time >= '{start_date}'::date 
-                                AND start_time < '{end_date}'::date + INTERVAL '1 day') > 0 
-                        THEN 0 
-                        ELSE COALESCE(SUM(credits_used), 0) 
-                    END as credits
+                SELECT 'DOCUMENT_AI',
+                       COALESCE(SUM(credits_used), 0)
                 FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
                 WHERE start_time >= '{start_date}'::date
-                  AND start_time < '{end_date}'::date + INTERVAL '1 day'
-                
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
                 UNION ALL
-                
-                SELECT 
-                    'CORTEX_SEARCH_SERVING' as service,
-                    COALESCE(SUM(credits), 0) as credits
+                SELECT 'CORTEX_SEARCH_SERVING',
+                       COALESCE(SUM(credits), 0)
                 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
                 WHERE start_time >= '{start_date}'::date
-                  AND start_time < '{end_date}'::date + INTERVAL '1 day'
-                
-            UNION ALL
-            
-            SELECT 
-                'CORTEX_FINE_TUNING' as service,
-                COALESCE(SUM(token_credits), 0) as credits
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
-            WHERE start_time >= '{start_date}'::date
-              AND start_time < '{end_date}'::date + INTERVAL '1 day'
-            
-            UNION ALL
-            
-            SELECT 
-                'CORTEX_DOCUMENT_PROCESSING' as service,
-                COALESCE(SUM(credits_used), 0) as credits
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
-            WHERE start_time >= '{start_date}'::date
-              AND start_time < '{end_date}'::date + INTERVAL '1 day'
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
+                UNION ALL
+                SELECT 'CORTEX_FINE_TUNING',
+                       COALESCE(SUM(token_credits), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
+                WHERE start_time >= '{start_date}'::date
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
+                UNION ALL
+                -- CORTEX_DOCUMENT_PROCESSING is FALLBACK (broken) — 0 credits in primary sum
+                SELECT 'CORTEX_DOCUMENT_PROCESSING',
+                       0 AS credits
+                UNION ALL
+                SELECT 'CORTEX_AGENT',
+                       COALESCE(SUM(token_credits), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
+                WHERE start_time >= '{start_date}'::date
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
+                UNION ALL
+                SELECT 'SNOWFLAKE_INTELLIGENCE',
+                       COALESCE(SUM(token_credits), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
+                WHERE start_time >= '{start_date}'::date
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
             ),
             service_totals AS (
-                SELECT 
-                    service,
-                    credits,
-                    SUM(credits) OVER() as total_individual
+                SELECT service, credits, SUM(credits) OVER() AS total_individual
                 FROM individual_services
             ),
             summary AS (
-                SELECT 
-                    b.total_credits as ai_services_baseline,
+                SELECT
+                    b.total_credits                                                              AS ai_services_baseline,
                     st.total_individual,
-                    -- Return individual columns instead of complex object
-                MAX(CASE WHEN st.service = 'CORTEX_FUNCTIONS_USAGE' THEN st.credits END) as cortex_functions,
-                MAX(CASE WHEN st.service = 'CORTEX_ANALYST' THEN st.credits END) as cortex_analyst,
-                MAX(CASE WHEN st.service = 'DOCUMENT_AI' THEN st.credits END) as document_ai,
-                MAX(CASE WHEN st.service = 'CORTEX_SEARCH_SERVING' THEN st.credits END) as cortex_search,
-                MAX(CASE WHEN st.service = 'CORTEX_FINE_TUNING' THEN st.credits END) as cortex_fine_tuning,
-                MAX(CASE WHEN st.service = 'CORTEX_DOCUMENT_PROCESSING' THEN st.credits END) as cortex_document_processing
-                FROM ai_baseline b
-                CROSS JOIN service_totals st
+                    MAX(CASE WHEN st.service = 'CORTEX_AI_FUNCTIONS'        THEN st.credits END) AS cortex_ai_functions,
+                    MAX(CASE WHEN st.service = 'CORTEX_AISQL'               THEN st.credits END) AS cortex_aisql,
+                    MAX(CASE WHEN st.service = 'CORTEX_ANALYST'             THEN st.credits END) AS cortex_analyst,
+                    MAX(CASE WHEN st.service = 'DOCUMENT_AI'                THEN st.credits END) AS document_ai,
+                    MAX(CASE WHEN st.service = 'CORTEX_SEARCH_SERVING'      THEN st.credits END) AS cortex_search_serving,
+                    MAX(CASE WHEN st.service = 'CORTEX_FINE_TUNING'         THEN st.credits END) AS cortex_fine_tuning,
+                    MAX(CASE WHEN st.service = 'CORTEX_DOCUMENT_PROCESSING' THEN st.credits END) AS cortex_document_processing,
+                    MAX(CASE WHEN st.service = 'CORTEX_AGENT'               THEN st.credits END) AS cortex_agent,
+                    MAX(CASE WHEN st.service = 'SNOWFLAKE_INTELLIGENCE'     THEN st.credits END) AS snowflake_intelligence
+                FROM ai_baseline b CROSS JOIN service_totals st
                 GROUP BY b.total_credits, st.total_individual
             )
-            SELECT 
+            SELECT
                 ai_services_baseline,
                 total_individual,
-                cortex_functions,
+                cortex_ai_functions,
+                cortex_aisql,
                 cortex_analyst,
                 document_ai,
-                cortex_search,
+                cortex_search_serving,
                 cortex_fine_tuning,
                 cortex_document_processing,
-                ((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) as variance_pct,
-                (total_individual / NULLIF(ai_services_baseline, 0) * 100) as coverage_pct
+                cortex_agent,
+                snowflake_intelligence,
+                ((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) AS variance_pct,
+                (total_individual / NULLIF(ai_services_baseline, 0) * 100)                          AS coverage_pct
             FROM summary
             """
-            
-            # Use the monitored query execution
             result = self._execute_query_with_monitoring(query, "optimized_reconciliation")
-            
             if result:
-                row = result[0]
-                # Convert Snowpark Row to dict for easier access
-                row_dict = row.asDict() if hasattr(row, 'asDict') else dict(row)
-                
-                # Build service breakdown from individual columns
+                row = result[0].asDict() if hasattr(result[0], 'asDict') else dict(result[0])
                 service_breakdown = {
-                    'CORTEX_FUNCTIONS_USAGE': float(row_dict.get('CORTEX_FUNCTIONS', 0) or 0),
-                    'CORTEX_ANALYST': float(row_dict.get('CORTEX_ANALYST', 0) or 0),
-                    'DOCUMENT_AI': float(row_dict.get('DOCUMENT_AI', 0) or 0),
-                    'CORTEX_SEARCH_SERVING': float(row_dict.get('CORTEX_SEARCH', 0) or 0),
-                    'CORTEX_FINE_TUNING': float(row_dict.get('CORTEX_FINE_TUNING', 0) or 0),
-                    'CORTEX_DOCUMENT_PROCESSING': float(row_dict.get('CORTEX_DOCUMENT_PROCESSING', 0) or 0)
+                    'CORTEX_AI_FUNCTIONS':        float(row.get('CORTEX_AI_FUNCTIONS', 0) or 0),
+                    'CORTEX_AISQL':               float(row.get('CORTEX_AISQL', 0) or 0),
+                    'CORTEX_ANALYST':             float(row.get('CORTEX_ANALYST', 0) or 0),
+                    'DOCUMENT_AI':                float(row.get('DOCUMENT_AI', 0) or 0),
+                    'CORTEX_SEARCH_SERVING':      float(row.get('CORTEX_SEARCH_SERVING', 0) or 0),
+                    'CORTEX_FINE_TUNING':         float(row.get('CORTEX_FINE_TUNING', 0) or 0),
+                    'CORTEX_DOCUMENT_PROCESSING': float(row.get('CORTEX_DOCUMENT_PROCESSING', 0) or 0),
+                    'CORTEX_AGENT':               float(row.get('CORTEX_AGENT', 0) or 0),
+                    'SNOWFLAKE_INTELLIGENCE':     float(row.get('SNOWFLAKE_INTELLIGENCE', 0) or 0),
                 }
-                
-                variance_pct = float(row_dict.get('VARIANCE_PCT', 0) or 0)
-                
+                variance_pct = float(row.get('VARIANCE_PCT', 0) or 0)
                 return {
-                    'ai_services_baseline': float(row_dict.get('AI_SERVICES_BASELINE', 0) or 0),
+                    'ai_services_baseline': float(row.get('AI_SERVICES_BASELINE', 0) or 0),
                     'individual_services': service_breakdown,
-                    'total_individual': float(row_dict.get('TOTAL_INDIVIDUAL', 0) or 0),
+                    'total_individual': float(row.get('TOTAL_INDIVIDUAL', 0) or 0),
                     'variance_pct': variance_pct,
-                    'coverage_pct': float(row_dict.get('COVERAGE_PCT', 0) or 0),
-                    'reconciliation_status': self._get_reconciliation_status(abs(variance_pct))
+                    'coverage_pct': float(row.get('COVERAGE_PCT', 0) or 0),
+                    'reconciliation_status': self._get_reconciliation_status(abs(variance_pct)),
                 }
             else:
                 return {
-                    'ai_services_baseline': 0.0,
-                    'individual_services': {},
-                    'total_individual': 0.0,
-                    'variance_pct': 0.0,
-                    'coverage_pct': 0.0,
-                    'reconciliation_status': 'NO_DATA'
+                    'ai_services_baseline': 0.0, 'individual_services': {},
+                    'total_individual': 0.0, 'variance_pct': 0.0,
+                    'coverage_pct': 0.0, 'reconciliation_status': 'NO_DATA',
                 }
-                
         except Exception as e:
-            st.error(f"❌ Optimized reconciliation query failed: {str(e)}")
-            # Return error state instead of falling back
+            st.error(f"❌ Reconciliation query failed: {str(e)}")
             return {
-                'ai_services_baseline': 0.0,
-                'individual_services': {},
-                'total_individual': 0.0,
-                'variance_pct': 0.0,
-                'coverage_pct': 0.0,
-                'reconciliation_status': 'ERROR'
+                'ai_services_baseline': 0.0, 'individual_services': {},
+                'total_individual': 0.0, 'variance_pct': 0.0,
+                'coverage_pct': 0.0, 'reconciliation_status': 'ERROR',
             }
     
     def get_service_specific_details(self, service_name: str, start_date, end_date, limit: int = 100) -> pd.DataFrame:
