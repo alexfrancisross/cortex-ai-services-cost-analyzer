@@ -603,7 +603,127 @@ class SnowflakeDataLoader:
         except Exception as e:
             st.warning(f"Could not get Search Serving analysis: {str(e)}")
             return pd.DataFrame()
-    
+
+    @monitor_db_operation("get_cortex_agent_analysis")
+    def get_cortex_agent_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get Cortex Agents usage grouped by agent name.
+        TOKEN_CREDITS column. GA Feb 25 2026.
+        Note: AGENT_NAME is NULL for Snowsight CoCo traffic (until CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY rolls out).
+        """
+        try:
+            query = f"""
+            SELECT
+                COALESCE(AGENT_NAME, 'Snowsight CoCo (unattributed)')  AS agent_name,
+                AGENT_DATABASE_NAME,
+                AGENT_SCHEMA_NAME,
+                COUNT(*)                                                AS total_requests,
+                COALESCE(SUM(TOKEN_CREDITS), 0)                        AS total_credits,
+                COALESCE(SUM(TOKENS), 0)                               AS total_tokens,
+                MIN(START_TIME)                                        AS first_usage,
+                MAX(START_TIME)                                        AS last_usage
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
+            WHERE START_TIME >= '{start_date}'::date
+              AND START_TIME <  '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY COALESCE(AGENT_NAME, 'Snowsight CoCo (unattributed)'), AGENT_DATABASE_NAME, AGENT_SCHEMA_NAME
+            ORDER BY total_credits DESC
+            """
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+        except Exception as e:
+            import streamlit as st
+            st.warning(f"Could not get Cortex Agent analysis: {str(e)}")
+            return pd.DataFrame()
+
+    @monitor_db_operation("get_snowflake_intelligence_analysis")
+    def get_snowflake_intelligence_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get Snowflake Intelligence usage grouped by SI instance name.
+        TOKEN_CREDITS column. GA Feb 25 2026.
+        Does NOT include Cortex Agent requests (those are in CORTEX_AGENT_USAGE_HISTORY).
+        """
+        try:
+            query = f"""
+            SELECT
+                SNOWFLAKE_INTELLIGENCE_NAME,
+                COUNT(*)                         AS total_requests,
+                COALESCE(SUM(TOKEN_CREDITS), 0)  AS total_credits,
+                COALESCE(SUM(TOKENS), 0)         AS total_tokens,
+                COUNT(DISTINCT USER_NAME)        AS unique_users,
+                MIN(START_TIME)                  AS first_usage,
+                MAX(START_TIME)                  AS last_usage
+            FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
+            WHERE START_TIME >= '{start_date}'::date
+              AND START_TIME <  '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY SNOWFLAKE_INTELLIGENCE_NAME
+            ORDER BY total_credits DESC
+            """
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+        except Exception as e:
+            import streamlit as st
+            st.warning(f"Could not get Snowflake Intelligence analysis: {str(e)}")
+            return pd.DataFrame()
+
+    @monitor_db_operation("get_ai_functions_analysis")
+    def get_ai_functions_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get Cortex AI Functions usage grouped by function + model.
+        Uses CORTEX_AI_FUNCTIONS_USAGE_HISTORY (CREDITS column, GA Nov 2025).
+        """
+        try:
+            query = f"""
+            SELECT
+                FUNCTION_NAME,
+                COALESCE(NULLIF(MODEL_NAME, ''), 'N/A') AS model_name,
+                COUNT(DISTINCT QUERY_ID)                AS query_count,
+                COALESCE(SUM(CREDITS), 0)               AS total_credits,
+                COALESCE(SUM(TOKENS), 0)                AS total_tokens,
+                MIN(START_TIME)                         AS first_usage,
+                MAX(START_TIME)                         AS last_usage
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY
+            WHERE START_TIME >= '{start_date}'::date
+              AND START_TIME <  '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY FUNCTION_NAME, COALESCE(NULLIF(MODEL_NAME, ''), 'N/A')
+            ORDER BY total_credits DESC
+            """
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+        except Exception as e:
+            import streamlit as st
+            st.warning(f"Could not get AI Functions analysis: {str(e)}")
+            return pd.DataFrame()
+
+    @monitor_db_operation("get_cortex_code_analysis")
+    def get_cortex_code_analysis(self, start_date, end_date) -> pd.DataFrame:
+        """
+        Get Cortex Code CLI usage grouped by user.
+        Uses CORTEX_CODE_CLI_USAGE_HISTORY (USAGE_TIME column, not START_TIME).
+        Note: CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY is not yet fully rolled out (2026-03-26);
+        Snowsight CoCo traffic is in CORTEX_AGENT_USAGE_HISTORY where AGENT_NAME IS NULL.
+        """
+        try:
+            query = f"""
+            SELECT
+                USERNAME,
+                COUNT(*)                         AS total_requests,
+                COALESCE(SUM(TOKEN_CREDITS), 0)  AS total_credits,
+                COALESCE(SUM(TOKENS), 0)         AS total_tokens,
+                MIN(USAGE_TIME)                  AS first_usage,
+                MAX(USAGE_TIME)                  AS last_usage
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+            WHERE USAGE_TIME >= '{start_date}'::date
+              AND USAGE_TIME <  '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY USERNAME
+            ORDER BY total_credits DESC
+            """
+            result = self.session.sql(query).collect()
+            return pd.DataFrame([row.asDict() for row in result])
+        except Exception as e:
+            import streamlit as st
+            st.warning(f"Could not get Cortex Code CLI analysis: {str(e)}")
+            return pd.DataFrame()
+
     @monitor_db_operation("get_ai_services_reconciliation")
     def get_ai_services_reconciliation(self, start_date, end_date) -> Dict[str, Any]:
         """
