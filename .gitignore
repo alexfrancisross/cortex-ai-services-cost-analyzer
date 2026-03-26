@@ -1,10 +1,12 @@
 output/
-docs/
+docs/*
+!docs/superpowers/
 archive/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+NTT/
 
 # C extensions
 *.so
