@@ -142,6 +142,38 @@ class SnowflakeDataLoader:
         self._query_count = 0
         self._total_query_time = 0.0
     
+    @property
+    def primary_views(self) -> list:
+        """Return service config keys whose status is PRIMARY."""
+        return [k for k, v in self.service_configs.items() if v.get('status') == 'PRIMARY']
+
+    def probe_views(self) -> dict:
+        """
+        Test each view in service_configs against the live account.
+        Sets status to PRIMARY, FALLBACK, or UNAVAILABLE based on probe result.
+        Views starting as FALLBACK remain FALLBACK even if they respond (known-broken views).
+        Views starting as FALLBACK that error are set to UNAVAILABLE.
+        Called once at startup — wrap the call site with @st.cache_resource.
+        """
+        for key, config in self.service_configs.items():
+            original_status = config.get('status', 'PRIMARY')
+            try:
+                time_col = config.get('time_column', 'START_TIME')
+                if time_col == 'USAGE_TIME':
+                    where = "WHERE usage_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())"
+                else:
+                    where = "WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())"
+                self.session.sql(
+                    f"SELECT COUNT(*) AS count FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']} {where} LIMIT 1"
+                ).collect()
+                # Only upgrade to PRIMARY if view was not already demoted to FALLBACK
+                if original_status != 'FALLBACK':
+                    config['status'] = 'PRIMARY'
+                # FALLBACK views stay FALLBACK even if they respond (known-broken)
+            except Exception:
+                config['status'] = 'UNAVAILABLE'
+        return self.service_configs
+
     def _execute_query_with_monitoring(self, query: str, operation_name: str = "unknown"):
         """
         Execute query with performance monitoring.
