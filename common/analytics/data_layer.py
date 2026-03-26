@@ -56,50 +56,83 @@ class SnowflakeDataLoader:
             # Timeout setting might not be supported in all environments
             pass
         
-        # Service table configurations - Corrected to avoid double-counting
+        # Service table registry — single source of truth for view names and credit columns.
+        # status: 'PRIMARY' (include in reconciliation sum) | 'FALLBACK' (query but warn, exclude from sum)
+        # probe_views() sets status at startup based on live account probe.
         self.service_configs = {
-            'CORTEX_FUNCTIONS_QUERY': {
-                'table': 'CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY',
+            'CORTEX_AI_FUNCTIONS': {
+                'table': 'CORTEX_AI_FUNCTIONS_USAGE_HISTORY',
+                'credit_column': 'CREDITS',
+                'time_column': 'START_TIME',
+                'granularity': 'Per-query AI function level',
+                'description': 'Cortex AI Functions (AI_COMPLETE, AI_EXTRACT, etc.)',
+                'status': 'PRIMARY',
+            },
+            'CORTEX_AISQL': {
+                'table': 'CORTEX_AISQL_USAGE_HISTORY',
                 'credit_column': 'TOKEN_CREDITS',
-                'time_column': None,  # Requires special handling with QUERY_HISTORY join
-                'granularity': 'Individual query level (most detailed)',
-                'description': 'Query-level LLM usage with user attribution'
+                'time_column': 'USAGE_TIME',
+                'granularity': 'Per-query AI SQL level',
+                'description': 'Cortex AI SQL functions (replaces CORTEX_FUNCTIONS views)',
+                'status': 'PRIMARY',
             },
             'CORTEX_ANALYST': {
-                'table': 'CORTEX_ANALYST_USAGE_HISTORY', 
+                'table': 'CORTEX_ANALYST_USAGE_HISTORY',
                 'credit_column': 'CREDITS',
                 'time_column': 'START_TIME',
                 'granularity': 'Request-level (most granular)',
-                'description': 'Analyst requests with detailed breakdown'
+                'description': 'Analyst requests with detailed breakdown',
+                'status': 'PRIMARY',
             },
             'DOCUMENT_AI': {
                 'table': 'DOCUMENT_AI_USAGE_HISTORY',
                 'credit_column': 'CREDITS_USED',
                 'time_column': 'START_TIME',
                 'granularity': 'Document-level processing',
-                'description': 'Document AI parsing and extraction'
+                'description': 'Document AI parsing and extraction',
+                'status': 'PRIMARY',
             },
             'CORTEX_SEARCH_SERVING': {
                 'table': 'CORTEX_SEARCH_SERVING_USAGE_HISTORY',
                 'credit_column': 'CREDITS',
                 'time_column': 'START_TIME',
                 'granularity': 'Hourly by service',
-                'description': 'Search serving usage'
+                'description': 'Search serving usage',
+                'status': 'PRIMARY',
             },
             'CORTEX_FINE_TUNING': {
                 'table': 'CORTEX_FINE_TUNING_USAGE_HISTORY',
                 'credit_column': 'TOKEN_CREDITS',
                 'time_column': 'START_TIME',
                 'granularity': 'Training session level',
-                'description': 'Model fine-tuning operations'
+                'description': 'Model fine-tuning operations',
+                'status': 'PRIMARY',
             },
             'CORTEX_DOCUMENT_PROCESSING': {
                 'table': 'CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY',
                 'credit_column': 'CREDITS_USED',
                 'time_column': 'START_TIME',
                 'granularity': 'Document processing level',
-                'description': 'Document processing operations'
-            }
+                'description': 'Document processing operations',
+                'status': 'FALLBACK',  # Broken post-Nov 2025 billing event changes
+                'warning': 'Data may be incomplete due to Nov 2025 billing event type changes.',
+            },
+            'CORTEX_AGENT': {
+                'table': 'CORTEX_AGENT_USAGE_HISTORY',
+                'credit_column': 'TOKEN_CREDITS',
+                'time_column': 'START_TIME',
+                'granularity': 'Per-request agent level',
+                'description': 'Cortex Agents usage (GA Feb 25 2026)',
+                'status': 'PRIMARY',
+            },
+            'SNOWFLAKE_INTELLIGENCE': {
+                'table': 'SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY',
+                'credit_column': 'TOKEN_CREDITS',
+                'time_column': 'START_TIME',
+                'granularity': 'Per-request SI level',
+                'description': 'Snowflake Intelligence usage (GA Feb 25 2026)',
+                'status': 'PRIMARY',
+            },
         }
         
         # Cache for available services (populated on first access)
