@@ -576,7 +576,7 @@ def main():
             st.metric(
                 "Individual Services Total", 
                 format_credits(summary_data['total_individual']),
-                help="Sum of all individual Cortex service tables:\n• CORTEX_FUNCTIONS_USAGE_HISTORY\n• CORTEX_ANALYST_USAGE_HISTORY\n• CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY\n• CORTEX_SEARCH_SERVING_USAGE_HISTORY"
+                help="Sum of all individual Cortex service views:\n• CORTEX_AI_FUNCTIONS_USAGE_HISTORY\n• CORTEX_AISQL_USAGE_HISTORY\n• CORTEX_ANALYST_USAGE_HISTORY\n• CORTEX_AGENT_USAGE_HISTORY ★ new\n• SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY ★ new\n• DOCUMENT_AI_USAGE_HISTORY\n• CORTEX_SEARCH_SERVING_USAGE_HISTORY\n• CORTEX_FINE_TUNING_USAGE_HISTORY"
             )
         
         with col3:
@@ -878,7 +878,63 @@ def main():
                     st.info("No service breakdown data available for the selected period.")
             except Exception as e:
                 st.error(f"Error loading service breakdown: {str(e)}")
-    
+
+        # Doc Processing warning banner
+        st.subheader("📄 Doc Processing")
+        st.warning(
+            "⚠️ **Doc Processing data may be incomplete.** "
+            "CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY was broken by Nov 2025 billing event type changes. "
+            "This view is excluded from the reconciliation sum until Snowflake resolves it."
+        )
+
+        # Cortex Agents — GA Feb 25 2026
+        st.subheader("🤖 Cortex Agents", help="Usage of Cortex Agents (GA Feb 25 2026). TOKEN_CREDITS column. Note: AGENT_NAME is NULL for Snowsight CoCo traffic until CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY rolls out.")
+        try:
+            agent_df = data_loader.get_cortex_agent_analysis(start_date, end_date)
+            if not agent_df.empty:
+                total_agent_credits = float(agent_df['TOTAL_CREDITS'].sum())
+                total_agent_requests = int(agent_df['TOTAL_REQUESTS'].sum())
+                c1, c2 = st.columns(2)
+                c1.metric("Total Agent Credits", f"{total_agent_credits:,.4f}")
+                c2.metric("Total Agent Requests", f"{total_agent_requests:,}")
+                st.dataframe(agent_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No Cortex Agent usage in the selected period.")
+        except Exception as e:
+            st.warning(f"Cortex Agent data not available: {e}")
+
+        # Snowflake Intelligence — GA Feb 25 2026
+        st.subheader("✨ Snowflake Intelligence", help="Usage of Snowflake Intelligence (GA Feb 25 2026). Does NOT include Cortex Agent requests — those appear in the Cortex Agents section above.")
+        try:
+            si_df = data_loader.get_snowflake_intelligence_analysis(start_date, end_date)
+            if not si_df.empty:
+                total_si_credits = float(si_df['TOTAL_CREDITS'].sum())
+                total_si_requests = int(si_df['TOTAL_REQUESTS'].sum())
+                c1, c2 = st.columns(2)
+                c1.metric("Total SI Credits", f"{total_si_credits:,.4f}")
+                c2.metric("Total SI Requests", f"{total_si_requests:,}")
+                st.dataframe(si_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No Snowflake Intelligence usage in the selected period.")
+        except Exception as e:
+            st.warning(f"Snowflake Intelligence data not available: {e}")
+
+        # Cortex Code CLI
+        st.subheader("💻 Cortex Code CLI", help="Cortex Code CLI usage by user. CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY (Snowsight traffic) is not yet fully rolled out — Snowsight CoCo traffic appears in Cortex Agents with AGENT_NAME = NULL.")
+        try:
+            code_df = data_loader.get_cortex_code_analysis(start_date, end_date)
+            if not code_df.empty:
+                total_code_credits = float(code_df['TOTAL_CREDITS'].sum())
+                total_code_requests = int(code_df['TOTAL_REQUESTS'].sum())
+                c1, c2 = st.columns(2)
+                c1.metric("Total Cortex Code Credits", f"{total_code_credits:,.4f}")
+                c2.metric("Total Requests", f"{total_code_requests:,}")
+                st.dataframe(code_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No Cortex Code CLI usage in the selected period.")
+        except Exception as e:
+            st.warning(f"Cortex Code CLI data not available: {e}")
+
     with tab3:
         st.subheader(f"📈 Usage Trends ({granularity})", help="Time series analysis showing credit consumption trends over time with individual function breakdown for models and specialized functions")
         
