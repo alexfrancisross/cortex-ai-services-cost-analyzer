@@ -233,11 +233,17 @@ class SnowflakeDataLoader:
             FROM SNOWFLAKE.INFORMATION_SCHEMA.TABLES
             WHERE TABLE_SCHEMA = 'ACCOUNT_USAGE'
               AND TABLE_NAME IN (
-                'CORTEX_FUNCTIONS_USAGE_HISTORY',
+                'CORTEX_AI_FUNCTIONS_USAGE_HISTORY',
+                'CORTEX_AISQL_USAGE_HISTORY',
                 'CORTEX_ANALYST_USAGE_HISTORY',
                 'CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY',
                 'CORTEX_SEARCH_SERVING_USAGE_HISTORY',
-                'CORTEX_SEARCH_DAILY_USAGE_HISTORY'
+                'CORTEX_SEARCH_DAILY_USAGE_HISTORY',
+                'DOCUMENT_AI_USAGE_HISTORY',
+                'CORTEX_FINE_TUNING_USAGE_HISTORY',
+                'CORTEX_AGENT_USAGE_HISTORY',
+                'SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY',
+                'CORTEX_CODE_CLI_USAGE_HISTORY'
               )
             """
             
@@ -368,15 +374,15 @@ class SnowflakeDataLoader:
                 AVG(TOKEN_CREDITS) as avg_credits_per_call,
                 NULLIF(SUM(TOKENS) / NULLIF(SUM(TOKEN_CREDITS), 0), 0) as tokens_per_credit,
                 ROUND(100 * SUM(TOKEN_CREDITS) / NULLIF(SUM(SUM(TOKEN_CREDITS)) OVER(), 0), 2) as pct_of_total_credits
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
-            WHERE START_TIME >= '{start_date}'::date
-                AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY 
-                CASE 
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+            WHERE USAGE_TIME >= '{start_date}'::date
+                AND USAGE_TIME < '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY
+                CASE
                     WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'Specialized Functions'
                     ELSE MODEL_NAME
                 END,
-                CASE 
+                CASE
                     WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'SPECIALIZED'
                     ELSE 'EXPLICIT_MODEL'
                 END
@@ -423,17 +429,17 @@ class SnowflakeDataLoader:
                 AVG(TOKEN_CREDITS) as avg_credits_per_call,
                 NULLIF(SUM(TOKENS) / NULLIF(SUM(TOKEN_CREDITS), 0), 0) as tokens_per_credit,
                 ROUND(100 * SUM(TOKEN_CREDITS) / NULLIF((
-                    SELECT SUM(TOKEN_CREDITS) 
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY 
-                    WHERE START_TIME >= '{start_date}'::date
-                        AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+                    SELECT SUM(TOKEN_CREDITS)
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+                    WHERE USAGE_TIME >= '{start_date}'::date
+                        AND USAGE_TIME < '{end_date}'::date + INTERVAL '1 day'
                         AND (MODEL_NAME = '' OR MODEL_NAME IS NULL)
                 ), 0), 2) as pct_of_specialized_credits,
-                MIN(START_TIME) as first_usage,
-                MAX(START_TIME) as last_usage
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
-            WHERE START_TIME >= '{start_date}'::date
-                AND START_TIME < '{end_date}'::date + INTERVAL '1 day'
+                MIN(USAGE_TIME) as first_usage,
+                MAX(USAGE_TIME) as last_usage
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+            WHERE USAGE_TIME >= '{start_date}'::date
+                AND USAGE_TIME < '{end_date}'::date + INTERVAL '1 day'
                 AND (MODEL_NAME = '' OR MODEL_NAME IS NULL)
             GROUP BY 
                 CASE 
@@ -696,9 +702,9 @@ class SnowflakeDataLoader:
                 SELECT 
                     'CORTEX_FUNCTIONS_USAGE' as service,
                     COALESCE(SUM(token_credits), 0) as credits
-                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
-                WHERE start_time >= '{start_date}'::date
-                  AND start_time < '{end_date}'::date + INTERVAL '1 day'
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+                WHERE usage_time >= '{start_date}'::date
+                  AND usage_time < '{end_date}'::date + INTERVAL '1 day'
                   -- Exclude AI_EXTRACT to prevent double counting with CORTEX_DOCUMENT_PROCESSING
                   AND function_name != 'AI_EXTRACT'
                 
@@ -987,9 +993,9 @@ class SnowflakeDataLoader:
                     ELSE 'Other Specialized'
                 END as service_type,
                 SUM(COALESCE(token_credits, 0)) as credits
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
-            WHERE start_time >= '{start_date}'::date
-              AND start_time < '{end_date}'::date + INTERVAL '1 day'
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+            WHERE usage_time >= '{start_date}'::date
+              AND usage_time < '{end_date}'::date + INTERVAL '1 day'
               AND (MODEL_NAME IS NULL OR MODEL_NAME = '')  -- Only specialized functions
             GROUP BY {date_trunc}, 
                 CASE 
@@ -1025,9 +1031,9 @@ class SnowflakeDataLoader:
                     ELSE 'Other Explicit'
                 END as service_type,
                 SUM(COALESCE(token_credits, 0)) as credits
-            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FUNCTIONS_USAGE_HISTORY
-            WHERE start_time >= '{start_date}'::date
-              AND start_time < '{end_date}'::date + INTERVAL '1 day'
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+            WHERE usage_time >= '{start_date}'::date
+              AND usage_time < '{end_date}'::date + INTERVAL '1 day'
               AND (MODEL_NAME IS NOT NULL AND MODEL_NAME != '')  -- Only explicit model functions
             GROUP BY {date_trunc}, 
                 CASE 
