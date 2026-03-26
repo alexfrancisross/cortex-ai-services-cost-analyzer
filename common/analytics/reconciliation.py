@@ -33,6 +33,8 @@ class ReconciliationEngine:
             raise ImportError("SnowflakeDataLoader not available")
 
         self._primary_view_count = len(self.data_loader.primary_views) if hasattr(self.data_loader, 'primary_views') else 6
+        # Note: probe_views() must be called before constructing this engine so
+        # that service_configs statuses are finalised and this snapshot is accurate.
 
         # Reconciliation thresholds based on testing results
         self.tolerance_thresholds = {
@@ -105,7 +107,7 @@ class ReconciliationEngine:
             results['granular_services'] = {
                 'credits': granular_total,
                 'tier': 'GRANULAR_SERVICES',
-                'description': 'Sum of 6 service tables',
+                'description': f'Sum of {self._primary_view_count} service tables',
                 'available': True,
                 'service_breakdown': granular_data['services'],
                 'service_count': granular_data['accessible_services']
