@@ -916,9 +916,9 @@ def main():
         st.subheader("🔧 Service Details & Breakdown", help="Detailed breakdown of all Snowflake Cortex AI services.\n\n📚 [Cortex AI Overview](https://docs.snowflake.com/en/user-guide/snowflake-cortex/overview)")
 
         st.info(
-            "ℹ️ **CORTEX_AI_FUNCTIONS_USAGE_HISTORY** is excluded from all totals — "
+            "ℹ️ **CORTEX_AI_FUNCTIONS_USAGE_HISTORY** is excluded from all totals. "
             "it is an exact duplicate of CORTEX_AISQL_USAGE_HISTORY (same credits, same rows). "
-            "**CORTEX_REST_API_USAGE_HISTORY** is also excluded — it is billed in USD/million tokens, not AI_SERVICES credits."
+            "**CORTEX_REST_API_USAGE_HISTORY** is also excluded. it is billed in USD/million tokens, not AI_SERVICES credits."
         )
 
         with st.spinner('Loading service details...'):
@@ -950,8 +950,8 @@ def main():
                                 color_discrete_sequence=get_snowflake_colors()
                             )
                             fig.update_traces(
-                                textinfo='percent+label',
-                                textfont_size=9,
+                                textinfo='none',
+                                hovertemplate='<b>%{label}</b><br>%{percent:.2g}<br>%{value:.2g} credits<extra></extra>',
                                 marker=dict(line=dict(color='#FFFFFF', width=2))
                             )
                             apply_snowflake_chart_styling(fig)
@@ -987,7 +987,7 @@ def main():
         st.warning(
             "⚠️ **Doc Processing credits are not available at granular level.** "
             "A Snowflake internal billing event type change (Nov 2025) stopped populating "
-            "`CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY` — the view exists but returns 0 rows. "
+            "`CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY`: the view exists but returns 0 rows. "
             "Document processing credits are still billed and visible in **METERING_HISTORY** "
             "under `AI_SERVICES` (Tier 2), but cannot be broken out per-job until Snowflake fixes the view. "
             "This service is excluded from the Tier 3 reconciliation sum."
@@ -1010,7 +1010,7 @@ def main():
             st.warning(f"Cortex Agent data not available: {e}")
 
         # Snowflake Intelligence — GA Feb 25 2026
-        st.subheader("✨ Snowflake Intelligence", help="Usage of Snowflake Intelligence (GA Feb 25 2026). Does NOT include Cortex Agent requests — those appear in the Cortex Agents section above.")
+        st.subheader("✨ Snowflake Intelligence", help="Usage of Snowflake Intelligence (GA Feb 25 2026). Does NOT include Cortex Agent requests: those appear in the Cortex Agents section above.")
         try:
             si_df = data_loader.get_snowflake_intelligence_analysis(start_date, end_date)
             if not si_df.empty:
@@ -1026,7 +1026,7 @@ def main():
             st.warning(f"Snowflake Intelligence data not available: {e}")
 
         # Cortex Code CLI
-        st.subheader("💻 Cortex Code CLI", help="Cortex Code CLI usage by user. CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY (Snowsight traffic) is not yet fully rolled out — Snowsight CoCo traffic appears in Cortex Agents with AGENT_NAME = NULL.")
+        st.subheader("💻 Cortex Code CLI", help="Cortex Code CLI usage by user. CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY (Snowsight traffic) is not yet fully rolled out: Snowsight CoCo traffic appears in Cortex Agents with AGENT_NAME = NULL.")
         try:
             code_df = data_loader.get_cortex_code_analysis(start_date, end_date)
             if not code_df.empty:
