@@ -69,11 +69,13 @@ def _get_standalone_session():
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
         
-        # Load configuration from config.toml
-        config_path = os.path.expanduser("~/.snowflake/config.toml")
+        # Load configuration — prefer local config.toml in repo root, fall back to ~/.snowflake/config.toml
+        local_config = os.path.join(os.path.dirname(__file__), "config.toml")
+        global_config = os.path.expanduser("~/.snowflake/config.toml")
+        config_path = local_config if os.path.exists(local_config) else global_config
         if not os.path.exists(config_path):
             st.error(f"Configuration file not found: {config_path}")
-            st.info("Please ensure `~/.snowflake/config.toml` is configured with JWT key-pair authentication")
+            st.info("Copy `config.toml.example` to `config.toml` and fill in your credentials.")
             st.stop()
         
         config = toml.load(config_path)
@@ -81,32 +83,31 @@ def _get_standalone_session():
         # Use default connection
         conn_config = config['connections']['default']
         
-        # Load private key
-        with open(os.path.expanduser(conn_config['private_key_path']), 'rb') as key_file:
+        # Load private key — support both 'private_key_path' and 'private_key_file' (Snowflake CLI)
+        key_path = conn_config.get('private_key_path') or conn_config.get('private_key_file')
+        with open(os.path.expanduser(key_path), 'rb') as key_file:
             private_key = load_pem_private_key(
                 key_file.read(),
                 password=None
             )
         
-        # Convert private key to DER format and base64 encode for Snowpark
-        import base64
+        # Convert private key to DER bytes for Snowpark (expects bytes, not base64 string)
         private_key_der = private_key.private_bytes(
             encoding=serialization.Encoding.DER,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption()
         )
-        private_key_b64 = base64.b64encode(private_key_der).decode('utf-8')
-        
+
         # Create Snowpark session for standalone mode
-        session = Session.builder.configs({
+        session_configs = {
             'account': conn_config['account'],
             'user': conn_config['user'],
-            'private_key': private_key_b64,
-            'warehouse': conn_config['warehouse'],
-            'database': conn_config['database'],
-            'schema': conn_config['schema'],
-            'role': conn_config['role']
-        }).create()
+            'private_key': private_key_der,
+        }
+        for optional in ('warehouse', 'database', 'schema', 'role'):
+            if optional in conn_config:
+                session_configs[optional] = conn_config[optional]
+        session = Session.builder.configs(session_configs).create()
         
         # Test the session with a simple query to ensure it's working
         session.sql("SELECT CURRENT_VERSION()").collect()
@@ -121,7 +122,9 @@ def _get_standalone_session():
         2. **Standalone**: Ensure `~/.snowflake/config.toml` is configured with JWT key-pair authentication
         """)
         st.info("**Debug Information:**")
-        st.code(f"Config path: {os.path.expanduser('~/.snowflake/config.toml')}")
+        local_cfg = os.path.join(os.path.dirname(__file__), "config.toml")
+        active_cfg = local_cfg if os.path.exists(local_cfg) else os.path.expanduser("~/.snowflake/config.toml")
+        st.code(f"Config path: {active_cfg}")
         st.code(f"Error details: {str(e)}")
         st.stop()
 
@@ -516,6 +519,13 @@ def main():
     # Combined Documentation & Resources Expander
     with st.expander("📚 Documentation & Resources", expanded=False):
         st.markdown("""
+        **Billing Domain Notes:**
+        - **CORTEX_REST_API_USAGE_HISTORY**: Billed in USD/million tokens — NOT in AI_SERVICES credits. Excluded from reconciliation.
+        - **CORTEX_AI_FUNCTIONS_USAGE_HISTORY**: Excluded from sum — exact duplicate of CORTEX_AISQL_USAGE_HISTORY (identical credits).
+        - **CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY**: Excluded from reconciliation sum — Snowflake billing event type change (Nov 2025) stopped populating this view (0 rows returned). Credits are still billed under METERING_HISTORY AI_SERVICES (Tier 2) but cannot be broken out at granular level until Snowflake resolves the view.
+
+        ---
+
         **Billing & Metering:**
         - [Learn about metering](https://docs.snowflake.com/en/user-guide/cost-understanding-compute) - Understanding compute costs
         - [Account Usage Views](https://docs.snowflake.com/en/sql-reference/account-usage) - Usage monitoring views
@@ -574,9 +584,27 @@ def main():
         
         with col2:
             st.metric(
-                "Individual Services Total", 
+                "Individual Services Total",
                 format_credits(summary_data['total_individual']),
-                help="Sum of all individual Cortex service views:\n• CORTEX_AI_FUNCTIONS_USAGE_HISTORY\n• CORTEX_AISQL_USAGE_HISTORY\n• CORTEX_ANALYST_USAGE_HISTORY\n• CORTEX_AGENT_USAGE_HISTORY ★ new\n• SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY ★ new\n• DOCUMENT_AI_USAGE_HISTORY\n• CORTEX_SEARCH_SERVING_USAGE_HISTORY\n• CORTEX_FINE_TUNING_USAGE_HISTORY"
+                help=(
+                    "Sum of all individual Cortex service views:\n"
+                    "• CORTEX_AISQL (excl. query_tag=cortex_code_cli rows)\n"
+                    "• CORTEX_CODE_CLI  ★ now included\n"
+                    "• CORTEX_CODE_SNOWSIGHT  ★ now included\n"
+                    "• CORTEX_ANALYST\n"
+                    "• CORTEX_AGENT\n"
+                    "• SNOWFLAKE_INTELLIGENCE\n"
+                    "• CORTEX_SEARCH_SERVING\n"
+                    "• CORTEX_SEARCH_DAILY  ★ now included\n"
+                    "• CORTEX_SEARCH_BATCH_QUERY  ★ now included\n"
+                    "• CORTEX_PROVISIONED_THROUGHPUT  ★ now included\n"
+                    "• CORTEX_FINE_TUNING\n"
+                    "• DOCUMENT_AI\n"
+                    "• CORTEX_DOCUMENT_PROCESSING (FALLBACK — excluded until fixed)\n"
+                    "────────────────────────\n"
+                    "Excluded: CORTEX_AI_FUNCTIONS (duplicate of AISQL)\n"
+                    "Excluded: CORTEX_REST_API (USD-billed, not credits)"
+                )
             )
         
         with col3:
@@ -597,9 +625,55 @@ def main():
     else:
         st.warning("No reconciliation data available for the selected date range.")
         st.info("This might be because:")
-        st.info("• No AI Services usage in the selected period")  
+        st.info("• No AI Services usage in the selected period")
         st.info("• Insufficient permissions to access ACCOUNT_USAGE views")
         st.info("• Data latency (ACCOUNT_USAGE views have up to 3-hour delay)")
+
+    # Per-service credit attribution bar chart
+    if summary_data and summary_data.get('individual_services'):
+        svc = summary_data['individual_services']
+        svc_df = pd.DataFrame([
+            {'Service': k, 'Credits': v}
+            for k, v in svc.items() if v > 0
+        ]).sort_values('Credits', ascending=True)
+
+        if not svc_df.empty:
+            fig = px.bar(
+                svc_df, x='Credits', y='Service', orientation='h',
+                title='Credit Attribution by Service (Tier 3 Breakdown)',
+                color_discrete_sequence=['#29B5E8'],
+                text='Credits'
+            )
+            fig.update_traces(
+                texttemplate='%{text:.3f}',
+                textposition='outside',
+                marker_color='#29B5E8',
+                marker_line_color='#11567F',
+                marker_line_width=1
+            )
+            fig.update_layout(
+                xaxis_title='Credits',
+                yaxis_title='',
+                showlegend=False,
+                margin=dict(l=0, r=80, t=40, b=0),
+            )
+            apply_snowflake_chart_styling(fig)
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Data freshness warning
+    try:
+        with st.spinner('Checking data freshness...'):
+            freshness = data_loader.get_data_freshness()
+        lagging = {k: v for k, v in freshness.items() if v > 2}
+        if lagging:
+            lag_parts = ', '.join(f'**{k}** ({v}d behind)' for k, v in sorted(lagging.items(), key=lambda x: -x[1]))
+            st.warning(
+                f"⚠️ **Data Freshness Warning**: {lag_parts}. "
+                "Variance shown above may be higher than the true steady-state value until these "
+                "granular views catch up to METERING_HISTORY."
+            )
+    except Exception:
+        pass  # Non-blocking — freshness check should never break the dashboard
     
     # Enhanced Detailed Analysis Section
     st.markdown('<h2 class="section-header">📈 Detailed Analysis</h2>', unsafe_allow_html=True)
@@ -840,22 +914,51 @@ def main():
     
     with tab2:
         st.subheader("🔧 Service Details & Breakdown", help="Detailed breakdown of all Snowflake Cortex AI services.\n\n📚 [Cortex AI Overview](https://docs.snowflake.com/en/user-guide/snowflake-cortex/overview)")
-        
+
+        st.info(
+            "ℹ️ **CORTEX_AI_FUNCTIONS_USAGE_HISTORY** is excluded from all totals — "
+            "it is an exact duplicate of CORTEX_AISQL_USAGE_HISTORY (same credits, same rows). "
+            "**CORTEX_REST_API_USAGE_HISTORY** is also excluded — it is billed in USD/million tokens, not AI_SERVICES credits."
+        )
+
         with st.spinner('Loading service details...'):
             try:
                 with measure_time("service_breakdown_load"):
                     service_breakdown = data_loader.get_service_breakdown_cached(start_date, end_date, services_filter)
-                
+
                 if not service_breakdown.empty:
-                    # Service breakdown table
-                    display_df = service_breakdown.copy()
-                    if 'total_credits' in display_df.columns:
-                        display_df['total_credits'] = display_df['total_credits'].apply(format_credits)
-                    if 'percentage' in display_df.columns:
-                        display_df['percentage'] = display_df['percentage'].apply(lambda x: f"{x:.2f}%")
-                    
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
-                    
+                    # Two-column layout: table left, pie chart right
+                    col_table, col_chart = st.columns([3, 2])
+
+                    with col_table:
+                        display_df = service_breakdown.copy()
+                        if 'total_credits' in display_df.columns:
+                            display_df['total_credits'] = display_df['total_credits'].apply(format_credits)
+                        if 'percentage' in display_df.columns:
+                            display_df['percentage'] = display_df['percentage'].apply(lambda x: f"{x:.2f}%")
+                        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+                    with col_chart:
+                        active = service_breakdown[service_breakdown['total_credits'] > 0]
+                        if not active.empty:
+                            fig = px.pie(
+                                active,
+                                values='total_credits',
+                                names='service_type',
+                                title='Service Credit Share',
+                                hole=0.4,
+                                color_discrete_sequence=get_snowflake_colors()
+                            )
+                            fig.update_traces(
+                                textinfo='percent+label',
+                                textfont_size=9,
+                                marker=dict(line=dict(color='#FFFFFF', width=2))
+                            )
+                            apply_snowflake_chart_styling(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No active services with credits in the selected period.")
+
                     # Service-specific insights
                     for service in service_breakdown['service_type'].unique():
                         service_data = service_breakdown[service_breakdown['service_type'] == service]
@@ -882,9 +985,12 @@ def main():
         # Doc Processing warning banner
         st.subheader("📄 Doc Processing")
         st.warning(
-            "⚠️ **Doc Processing data may be incomplete.** "
-            "CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY was broken by Nov 2025 billing event type changes. "
-            "This view is excluded from the reconciliation sum until Snowflake resolves it."
+            "⚠️ **Doc Processing credits are not available at granular level.** "
+            "A Snowflake internal billing event type change (Nov 2025) stopped populating "
+            "`CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY` — the view exists but returns 0 rows. "
+            "Document processing credits are still billed and visible in **METERING_HISTORY** "
+            "under `AI_SERVICES` (Tier 2), but cannot be broken out per-job until Snowflake fixes the view. "
+            "This service is excluded from the Tier 3 reconciliation sum."
         )
 
         # Cortex Agents — GA Feb 25 2026
@@ -984,7 +1090,7 @@ def main():
                 st.error(f"Error loading time series analysis: {str(e)}")
     
     with tab4:
-        st.subheader("📋 Raw Data Export", help="Export detailed raw data from all Cortex services in CSV or Excel format for further analysis")
+        st.subheader("📋 Raw Data Export", help="Export detailed raw data from all Cortex services in CSV format for further analysis")
         
         with st.spinner('Loading raw data...'):
             try:
@@ -1008,44 +1114,13 @@ def main():
                     st.dataframe(export_data.head(100), use_container_width=True)
                     
                     # Download options
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        csv_data = export_data.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Download Full Dataset (CSV)",
-                            data=csv_data,
-                            file_name=f"cortex_raw_data_{start_date}_{end_date}.csv",
-                            mime="text/csv"
-                        )
-                    
-                    with col2:
-                        # Excel export functionality
-                        try:
-                            from io import BytesIO
-                            
-                            # Fix timezone-aware datetime columns for Excel compatibility
-                            excel_data_copy = export_data.copy()
-                            
-                            # Convert timezone-aware datetime columns to timezone-naive
-                            for col in excel_data_copy.columns:
-                                if excel_data_copy[col].dtype == 'datetime64[ns, UTC]' or 'datetime' in str(excel_data_copy[col].dtype):
-                                    if hasattr(excel_data_copy[col].dtype, 'tz') and excel_data_copy[col].dtype.tz is not None:
-                                        excel_data_copy[col] = excel_data_copy[col].dt.tz_localize(None)
-                            
-                            excel_buffer = BytesIO()
-                            excel_data_copy.to_excel(excel_buffer, index=False, engine='openpyxl')
-                            excel_data = excel_buffer.getvalue()
-                            
-                            st.download_button(
-                                label="📊 Download Full Dataset (Excel)",
-                                data=excel_data,
-                                file_name=f"cortex_raw_data_{start_date}_{end_date}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                        except ImportError:
-                            st.info("💡 Excel export requires openpyxl package")
-                        except Exception as e:
-                            st.warning(f"Excel export unavailable: {str(e)}")
+                    csv_data = export_data.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Full Dataset (CSV)",
+                        data=csv_data,
+                        file_name=f"cortex_raw_data_{start_date}_{end_date}.csv",
+                        mime="text/csv"
+                    )
                 else:
                     st.info("No raw data available for export.")
             except Exception as e:
@@ -1086,8 +1161,26 @@ def main():
         'Connection Failed': "#dc3545"
     }.get(mode, "#6c757d")
     
-    st.sidebar.markdown(f'<div class="deployment-mode">{mode_emoji} Mode: {mode}</div>', 
+    st.sidebar.markdown(f'<div class="deployment-mode">{mode_emoji} Mode: {mode}</div>',
                        unsafe_allow_html=True)
+
+    # Show connected account details
+    try:
+        session_result = get_snowflake_session()
+        if session_result:
+            _session, _ = session_result
+            row = _session.sql("SELECT CURRENT_ACCOUNT() AS acct, CURRENT_USER() AS usr, CURRENT_ROLE() AS rol, CURRENT_WAREHOUSE() AS wh").collect()[0]
+            st.sidebar.markdown(
+                f"<div style='font-size:0.72rem;color:#888;margin-top:6px;line-height:1.6'>"
+                f"<b>Account:</b> {row['ACCT']}<br>"
+                f"<b>User:</b> {row['USR']}<br>"
+                f"<b>Role:</b> {row['ROL']}<br>"
+                f"<b>Warehouse:</b> {row['WH']}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+    except Exception:
+        pass
     
     # Show performance debugging dashboard if enabled
     if show_debug:

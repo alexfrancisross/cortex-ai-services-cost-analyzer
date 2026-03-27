@@ -1,24 +1,34 @@
 -- =============================================================================
 -- CORTEX AI SERVICES COST ANALYSIS
 -- =============================================================================
--- This script provides all insights from the Cortex Cost Analyzer Streamlit app
--- Includes: Reconciliation, Enhanced Model Analysis, Specialized Functions, 
---          Individual Service Analysis, Time Series with Function Breakdown, Raw Data
--- 
--- 
--- Key Features:
--- - Individual specialized function breakdown (TRANSLATE, CLASSIFY_TEXT, etc.)
--- - Explicit model vs specialized function separation
--- - Cortex Analyst, Document Processing, and Cortex Search analysis
--- - Cortex Agent and Snowflake Intelligence (GA Feb 25 2026)
--- - Time series with individual function breakdown
--- - CORTEX_AISQL_USAGE_HISTORY replaces deprecated CORTEX_FUNCTIONS_USAGE_HISTORY
--- 
+-- This script provides all insights from the Cortex Cost Analyzer Streamlit app.
+-- Includes: Reconciliation, Enhanced Model Analysis, Specialized Functions,
+--           Individual Service Analysis, Time Series with Function Breakdown, Raw Data
+--
+-- Billing Domain Notes:
+--   CORTEX_AI_FUNCTIONS_USAGE_HISTORY   — excluded from all sums; exact duplicate of
+--                                         CORTEX_AISQL_USAGE_HISTORY (identical credits).
+--   CORTEX_AISQL_USAGE_HISTORY          — rows tagged query_tag LIKE '%cortex_code_cli%'
+--                                         are ALSO in CORTEX_CODE_CLI_USAGE_HISTORY.
+--                                         Filter them out to avoid double-counting.
+--   CORTEX_REST_API_USAGE_HISTORY       — billed in USD/million tokens, NOT in AI_SERVICES
+--                                         credits. Excluded from reconciliation entirely.
+--   CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY — FALLBACK: billing event type changed
+--                                         Nov 2025; view may return 0 on some accounts.
+--                                         Zeroed out in reconciliation sum.
+--
+-- Key Views and Time Columns:
+--   CORTEX_AISQL / CODE_CLI / CODE_SNOWSIGHT  → USAGE_TIME
+--   CORTEX_SEARCH_DAILY                        → USAGE_DATE (DATE, not TIMESTAMP)
+--   CORTEX_PROVISIONED_THROUGHPUT              → INTERVAL_START_TIME
+--   All other views                            → START_TIME
+--
 -- Author: Alex Ross
--- Date: 2025-10-08
+-- Updated: 2026-03-27
 -- =============================================================================
 
 -- Set date range variables (adjust as needed)
+-- Example last-30-days: SET start_date = DATEADD('day', -30, CURRENT_DATE())::DATE::VARCHAR;
 SET start_date = '2024-09-01';
 SET end_date = '2024-09-26';
 
@@ -27,9 +37,10 @@ SET end_date = '2024-09-26';
 -- =============================================================================
 -- Purpose: Reconcile AI_SERVICES baseline against sum of individual services
 -- Expected: Variance should be close to 0% for accurate billing reconciliation
+-- Thresholds: EXCELLENT ≤1%, GOOD ≤2%, WARNING ≤5%, CRITICAL >5%
 
 WITH ai_baseline AS (
-    -- Get AI_SERVICES baseline from metering history
+    -- Tier 2: METERING_HISTORY is the authoritative billing baseline
     SELECT COALESCE(SUM(credits_used), 0) as total_credits
     FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
     WHERE start_time >= $start_date::date
@@ -37,68 +48,43 @@ WITH ai_baseline AS (
       AND service_type = 'AI_SERVICES'
 ),
 individual_services AS (
-    -- Cortex AI SQL (replaces deprecated CORTEX_FUNCTIONS_USAGE_HISTORY for LLM calls)
+    -- CORTEX_AISQL: exclude rows tagged app:cortex_code_cli (also in CODE_CLI — double-count)
+    -- NOTE: CORTEX_AI_FUNCTIONS_USAGE_HISTORY excluded — exact duplicate of CORTEX_AISQL
     SELECT
         'CORTEX_AISQL' as service,
         COALESCE(SUM(token_credits), 0) as credits
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
     WHERE usage_time >= $start_date::date
       AND usage_time < $end_date::date + INTERVAL '1 day'
-    
+      AND NOT (query_tag LIKE '%cortex_code_cli%')
+
     UNION ALL
-    
+
+    -- Cortex Code CLI (terminal / VS Code extension)
+    SELECT
+        'CORTEX_CODE_CLI' as service,
+        COALESCE(SUM(token_credits), 0) as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+    WHERE usage_time >= $start_date::date
+      AND usage_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Code in Snowsight
+    SELECT
+        'CORTEX_CODE_SNOWSIGHT' as service,
+        COALESCE(SUM(token_credits), 0) as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+    WHERE usage_time >= $start_date::date
+      AND usage_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
     -- Cortex Analyst (REST API usage)
-    SELECT 
+    SELECT
         'CORTEX_ANALYST' as service,
         COALESCE(SUM(credits), 0) as credits
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Document AI (legacy, pre-Cortex document processing)
-    -- Only include if modern CORTEX_DOCUMENT_PROCESSING has no data to prevent double counting
-    SELECT 
-        'DOCUMENT_AI' as service,
-        CASE 
-            WHEN (SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY 
-                  WHERE start_time >= $start_date::date 
-                    AND start_time < $end_date::date + INTERVAL '1 day') > 0 
-            THEN 0 
-            ELSE COALESCE(SUM(credits_used), 0) 
-        END as credits
-    FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Cortex Search Serving (vector search operations)
-    SELECT 
-        'CORTEX_SEARCH_SERVING' as service,
-        COALESCE(SUM(credits), 0) as credits
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Cortex Fine Tuning (model customization)
-    SELECT 
-        'CORTEX_FINE_TUNING' as service,
-        COALESCE(SUM(token_credits), 0) as credits
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Cortex Document Processing (modern document AI)
-    SELECT
-        'CORTEX_DOCUMENT_PROCESSING' as service,
-        COALESCE(SUM(credits_used), 0) as credits
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
 
@@ -121,27 +107,107 @@ individual_services AS (
     FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Search Serving (vector search query operations)
+    SELECT
+        'CORTEX_SEARCH_SERVING' as service,
+        COALESCE(SUM(credits), 0) as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Search Daily (index build/refresh — uses USAGE_DATE, a DATE column)
+    SELECT
+        'CORTEX_SEARCH_DAILY' as service,
+        COALESCE(SUM(credits), 0) as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_DAILY_USAGE_HISTORY
+    WHERE usage_date >= $start_date::date
+      AND usage_date <= $end_date::date
+
+    UNION ALL
+
+    -- Cortex Search Batch Queries
+    SELECT
+        'CORTEX_SEARCH_BATCH_QUERY' as service,
+        COALESCE(SUM(credits_used), 0) as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_BATCH_QUERY_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Fine Tuning (model customization)
+    SELECT
+        'CORTEX_FINE_TUNING' as service,
+        COALESCE(SUM(token_credits), 0) as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Provisioned Throughput Units (uses INTERVAL_START_TIME and PTU_CREDITS)
+    SELECT
+        'CORTEX_PROVISIONED_THROUGHPUT' as service,
+        COALESCE(SUM(ptu_credits), 0) as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_PROVISIONED_THROUGHPUT_USAGE_HISTORY
+    WHERE interval_start_time >= $start_date::date
+      AND interval_start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Document AI (legacy, pre-Cortex document processing)
+    -- Only include if CORTEX_DOCUMENT_PROCESSING has no data (prevent double-count)
+    SELECT
+        'DOCUMENT_AI' as service,
+        CASE
+            WHEN (SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
+                  WHERE start_time >= $start_date::date
+                    AND start_time < $end_date::date + INTERVAL '1 day') > 0
+            THEN 0
+            ELSE COALESCE(SUM(credits_used), 0)
+        END as credits
+    FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Document Processing — FALLBACK: zeroed due to billing event type change (Nov 2025)
+    -- View exists but credits_used may be unreliable on some accounts post-Nov 2025.
+    -- Re-enable when Snowflake confirms the fix.
+    SELECT
+        'CORTEX_DOCUMENT_PROCESSING' as service,
+        0 as credits
 ),
 service_totals AS (
-    SELECT 
+    SELECT
         service,
         credits,
         SUM(credits) OVER() as total_individual
     FROM individual_services
 ),
 summary AS (
-    SELECT 
+    SELECT
         b.total_credits as ai_services_baseline,
         st.total_individual,
-        -- Individual service breakdowns
-        MAX(CASE WHEN st.service = 'CORTEX_AISQL' THEN st.credits END) as cortex_aisql,
-        MAX(CASE WHEN st.service = 'CORTEX_ANALYST' THEN st.credits END) as cortex_analyst,
-        MAX(CASE WHEN st.service = 'DOCUMENT_AI' THEN st.credits END) as document_ai,
-        MAX(CASE WHEN st.service = 'CORTEX_SEARCH_SERVING' THEN st.credits END) as cortex_search,
-        MAX(CASE WHEN st.service = 'CORTEX_FINE_TUNING' THEN st.credits END) as cortex_fine_tuning,
-        MAX(CASE WHEN st.service = 'CORTEX_DOCUMENT_PROCESSING' THEN st.credits END) as cortex_document_processing,
-        MAX(CASE WHEN st.service = 'CORTEX_AGENT' THEN st.credits END) as cortex_agent,
-        MAX(CASE WHEN st.service = 'SNOWFLAKE_INTELLIGENCE' THEN st.credits END) as snowflake_intelligence
+        MAX(CASE WHEN st.service = 'CORTEX_AISQL'                  THEN st.credits END) as cortex_aisql,
+        MAX(CASE WHEN st.service = 'CORTEX_CODE_CLI'               THEN st.credits END) as cortex_code_cli,
+        MAX(CASE WHEN st.service = 'CORTEX_CODE_SNOWSIGHT'         THEN st.credits END) as cortex_code_snowsight,
+        MAX(CASE WHEN st.service = 'CORTEX_ANALYST'                THEN st.credits END) as cortex_analyst,
+        MAX(CASE WHEN st.service = 'CORTEX_AGENT'                  THEN st.credits END) as cortex_agent,
+        MAX(CASE WHEN st.service = 'SNOWFLAKE_INTELLIGENCE'        THEN st.credits END) as snowflake_intelligence,
+        MAX(CASE WHEN st.service = 'CORTEX_SEARCH_SERVING'         THEN st.credits END) as cortex_search_serving,
+        MAX(CASE WHEN st.service = 'CORTEX_SEARCH_DAILY'           THEN st.credits END) as cortex_search_daily,
+        MAX(CASE WHEN st.service = 'CORTEX_SEARCH_BATCH_QUERY'     THEN st.credits END) as cortex_search_batch_query,
+        MAX(CASE WHEN st.service = 'CORTEX_FINE_TUNING'            THEN st.credits END) as cortex_fine_tuning,
+        MAX(CASE WHEN st.service = 'CORTEX_PROVISIONED_THROUGHPUT' THEN st.credits END) as cortex_provisioned_throughput,
+        MAX(CASE WHEN st.service = 'DOCUMENT_AI'                   THEN st.credits END) as document_ai,
+        MAX(CASE WHEN st.service = 'CORTEX_DOCUMENT_PROCESSING'    THEN st.credits END) as cortex_document_processing
     FROM ai_baseline b
     CROSS JOIN service_totals st
     GROUP BY b.total_credits, st.total_individual
@@ -151,19 +217,24 @@ SELECT
     ai_services_baseline,
     total_individual,
     cortex_aisql,
+    cortex_code_cli,
+    cortex_code_snowsight,
     cortex_analyst,
-    document_ai,
-    cortex_search,
-    cortex_fine_tuning,
-    cortex_document_processing,
     cortex_agent,
     snowflake_intelligence,
+    cortex_search_serving,
+    cortex_search_daily,
+    cortex_search_batch_query,
+    cortex_fine_tuning,
+    cortex_provisioned_throughput,
+    document_ai,
+    cortex_document_processing,
     ((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) as variance_pct,
     (total_individual / NULLIF(ai_services_baseline, 0) * 100) as coverage_pct,
-    CASE 
+    CASE
         WHEN ABS((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) <= 1 THEN 'EXCELLENT'
-        WHEN ABS((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) <= 5 THEN 'GOOD'
-        WHEN ABS((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) <= 15 THEN 'WARNING'
+        WHEN ABS((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) <= 2 THEN 'GOOD'
+        WHEN ABS((total_individual - ai_services_baseline) / NULLIF(ai_services_baseline, 0) * 100) <= 5 THEN 'WARNING'
         ELSE 'CRITICAL'
     END as reconciliation_status
 FROM summary;
@@ -197,12 +268,12 @@ FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
 -- Cortex AI SQL (replaces CORTEX_FUNCTIONS_USAGE_HISTORY for LLM calls)
 WHERE USAGE_TIME >= $start_date::date
     AND USAGE_TIME < $end_date::date + INTERVAL '1 day'
-GROUP BY 
-    CASE 
+GROUP BY
+    CASE
         WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'Specialized Functions'
         ELSE MODEL_NAME
     END,
-    CASE 
+    CASE
         WHEN MODEL_NAME = '' OR MODEL_NAME IS NULL THEN 'SPECIALIZED'
         ELSE 'EXPLICIT_MODEL'
     END
@@ -214,13 +285,13 @@ ORDER BY total_credits DESC;
 -- Purpose: Detailed breakdown of specialized functions (TRANSLATE, CLASSIFY_TEXT, etc.)
 -- Insights: Function-specific usage patterns and efficiency
 
-SELECT 
+SELECT
     '2b. SPECIALIZED FUNCTIONS ANALYSIS' as analysis_type,
-    CASE 
+    CASE
         WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'OTHER'
         ELSE FUNCTION_NAME
     END as FUNCTION_NAME,
-    CASE 
+    CASE
         WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'Translation Services'
         WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'Text Classification'
         WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'Sentiment Analysis'
@@ -252,12 +323,12 @@ FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
 WHERE USAGE_TIME >= $start_date::date
     AND USAGE_TIME < $end_date::date + INTERVAL '1 day'
     AND (MODEL_NAME = '' OR MODEL_NAME IS NULL)
-GROUP BY 
-    CASE 
+GROUP BY
+    CASE
         WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'OTHER'
         ELSE FUNCTION_NAME
     END,
-    CASE 
+    CASE
         WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'Translation Services'
         WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'Text Classification'
         WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'Sentiment Analysis'
@@ -277,12 +348,14 @@ ORDER BY total_credits DESC;
 -- =============================================================================
 -- Purpose: Detailed breakdown of each AI service with usage metrics
 -- Insights: Service adoption, cost distribution, optimization targets
+-- Note: CORTEX_AI_FUNCTIONS excluded (duplicate of CORTEX_AISQL)
+--       CORTEX_DOCUMENT_PROCESSING shown as FALLBACK — credits zeroed (see header notes)
 
 WITH service_breakdown AS (
-    -- Cortex AI SQL (replaces deprecated CORTEX_FUNCTIONS_USAGE_HISTORY)
+    -- Cortex AI SQL — excludes rows tagged app:cortex_code_cli (counted in CODE_CLI)
     SELECT
         'CORTEX_AISQL' as service_type,
-        'Token-based LLM function calls' as description,
+        'Token-based LLM function calls (excl. code_cli tagged rows)' as description,
         'Individual function call level' as granularity,
         COUNT(*) as record_count,
         SUM(COALESCE(token_credits, 0)) as total_credits,
@@ -293,11 +366,46 @@ WITH service_breakdown AS (
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
     WHERE usage_time >= $start_date::date
       AND usage_time < $end_date::date + INTERVAL '1 day'
-    
+      AND NOT (query_tag LIKE '%cortex_code_cli%')
+
     UNION ALL
-    
+
+    -- Cortex Code CLI (terminal / VS Code extension)
+    SELECT
+        'CORTEX_CODE_CLI' as service_type,
+        'Cortex Code CLI (terminal / VS Code extension)' as description,
+        'Per-session user level' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(token_credits, 0)) as total_credits,
+        MIN(usage_time) as first_usage,
+        MAX(usage_time) as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+    WHERE usage_time >= $start_date::date
+      AND usage_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Code in Snowsight
+    SELECT
+        'CORTEX_CODE_SNOWSIGHT' as service_type,
+        'Cortex Code in Snowsight (rolling out 2026)' as description,
+        'Per-session Snowsight level' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(token_credits, 0)) as total_credits,
+        MIN(usage_time) as first_usage,
+        MAX(usage_time) as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+    WHERE usage_time >= $start_date::date
+      AND usage_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
     -- Cortex Analyst
-    SELECT 
+    SELECT
         'CORTEX_ANALYST' as service_type,
         'REST API requests for data analysis' as description,
         'Request level' as granularity,
@@ -308,74 +416,6 @@ WITH service_breakdown AS (
         NULL as unique_models,
         NULL as unique_functions
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Document AI
-    SELECT 
-        'DOCUMENT_AI' as service_type,
-        'Legacy document processing' as description,
-        'Document level' as granularity,
-        COUNT(*) as record_count,
-        SUM(COALESCE(credits_used, 0)) as total_credits,
-        MIN(start_time) as first_usage,
-        MAX(start_time) as last_usage,
-        NULL as unique_models,
-        NULL as unique_functions
-    FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Cortex Search Serving
-    SELECT 
-        'CORTEX_SEARCH_SERVING' as service_type,
-        'Vector search operations' as description,
-        'Hourly aggregation' as granularity,
-        COUNT(*) as record_count,
-        SUM(COALESCE(credits, 0)) as total_credits,
-        MIN(start_time) as first_usage,
-        MAX(start_time) as last_usage,
-        NULL as unique_models,
-        NULL as unique_functions
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Cortex Fine Tuning
-    SELECT 
-        'CORTEX_FINE_TUNING' as service_type,
-        'Model fine-tuning operations' as description,
-        'Token-based training usage' as granularity,
-        COUNT(*) as record_count,
-        SUM(COALESCE(token_credits, 0)) as total_credits,
-        MIN(start_time) as first_usage,
-        MAX(start_time) as last_usage,
-        COUNT(DISTINCT model_name) as unique_models,
-        NULL as unique_functions
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    
-    UNION ALL
-    
-    -- Cortex Document Processing
-    SELECT
-        'CORTEX_DOCUMENT_PROCESSING' as service_type,
-        'Modern document AI processing' as description,
-        'Document processing operations' as granularity,
-        COUNT(*) as record_count,
-        SUM(COALESCE(credits_used, 0)) as total_credits,
-        MIN(start_time) as first_usage,
-        MAX(start_time) as last_usage,
-        NULL as unique_models,
-        NULL as unique_functions
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
 
@@ -412,8 +452,124 @@ WITH service_breakdown AS (
     FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Search Serving
+    SELECT
+        'CORTEX_SEARCH_SERVING' as service_type,
+        'Vector search query operations' as description,
+        'Hourly aggregation' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(credits, 0)) as total_credits,
+        MIN(start_time) as first_usage,
+        MAX(start_time) as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Search Daily (index build/refresh — uses USAGE_DATE)
+    SELECT
+        'CORTEX_SEARCH_DAILY' as service_type,
+        'Cortex Search index build/refresh (daily)' as description,
+        'Daily by service' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(credits, 0)) as total_credits,
+        MIN(usage_date)::TIMESTAMP_NTZ as first_usage,
+        MAX(usage_date)::TIMESTAMP_NTZ as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_DAILY_USAGE_HISTORY
+    WHERE usage_date >= $start_date::date
+      AND usage_date <= $end_date::date
+
+    UNION ALL
+
+    -- Cortex Search Batch Queries
+    SELECT
+        'CORTEX_SEARCH_BATCH_QUERY' as service_type,
+        'Cortex Search batch queries' as description,
+        'Per-batch query level' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(credits_used, 0)) as total_credits,
+        MIN(start_time) as first_usage,
+        MAX(start_time) as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_BATCH_QUERY_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Fine Tuning
+    SELECT
+        'CORTEX_FINE_TUNING' as service_type,
+        'Model fine-tuning operations' as description,
+        'Token-based training usage' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(token_credits, 0)) as total_credits,
+        MIN(start_time) as first_usage,
+        MAX(start_time) as last_usage,
+        COUNT(DISTINCT model_name) as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Provisioned Throughput (uses INTERVAL_START_TIME and PTU_CREDITS)
+    SELECT
+        'CORTEX_PROVISIONED_THROUGHPUT' as service_type,
+        'Cortex Provisioned Throughput Units' as description,
+        'Hourly interval level' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(ptu_credits, 0)) as total_credits,
+        MIN(interval_start_time) as first_usage,
+        MAX(interval_start_time) as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_PROVISIONED_THROUGHPUT_USAGE_HISTORY
+    WHERE interval_start_time >= $start_date::date
+      AND interval_start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Document AI (legacy)
+    SELECT
+        'DOCUMENT_AI' as service_type,
+        'Legacy document processing' as description,
+        'Document level' as granularity,
+        COUNT(*) as record_count,
+        SUM(COALESCE(credits_used, 0)) as total_credits,
+        MIN(start_time) as first_usage,
+        MAX(start_time) as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
+    FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+
+    UNION ALL
+
+    -- Cortex Document Processing — FALLBACK: zeroed (billing event type change Nov 2025)
+    SELECT
+        'CORTEX_DOCUMENT_PROCESSING (FALLBACK)' as service_type,
+        'Modern document AI — EXCLUDED: billing event type change broke credits Nov 2025' as description,
+        'Document processing operations' as granularity,
+        0 as record_count,
+        0 as total_credits,
+        NULL as first_usage,
+        NULL as last_usage,
+        NULL as unique_models,
+        NULL as unique_functions
 )
-SELECT 
+SELECT
     '3. SERVICE BREAKDOWN' as analysis_type,
     service_type,
     description,
@@ -426,8 +582,7 @@ SELECT
     DATEDIFF('day', first_usage, last_usage) + 1 as days_active,
     unique_models,
     unique_functions,
-    -- Usage intensity
-    CASE 
+    CASE
         WHEN record_count = 0 THEN 'NO_USAGE'
         WHEN record_count < 100 THEN 'LOW'
         WHEN record_count < 1000 THEN 'MEDIUM'
@@ -439,18 +594,18 @@ WHERE total_credits > 0
 ORDER BY total_credits DESC;
 
 -- =============================================================================
--- 2c. CORTEX ANALYST ANALYSIS  
+-- 2c. CORTEX ANALYST ANALYSIS
 -- =============================================================================
 -- Purpose: Detailed analysis of Cortex Analyst usage (REST API access)
 
-SELECT 
+SELECT
     '2c. CORTEX ANALYST ANALYSIS' as analysis_type,
     COUNT(*) as total_requests,
     SUM(CREDITS) as total_credits,
     AVG(CREDITS) as avg_credits_per_request,
     ROUND(100 * SUM(CREDITS) / NULLIF((
-        SELECT SUM(CREDITS) 
-        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY 
+        SELECT SUM(CREDITS)
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
         WHERE START_TIME >= $start_date::date
             AND START_TIME < $end_date::date + INTERVAL '1 day'
     ), 0), 2) as pct_of_total_credits,
@@ -466,7 +621,7 @@ WHERE START_TIME >= $start_date::date
 -- =============================================================================
 -- Purpose: Detailed analysis of Document AI usage (modern document processing)
 
-SELECT 
+SELECT
     '2d. DOCUMENT AI ANALYSIS' as analysis_type,
     COUNT(*) as total_operations,
     SUM(CREDITS_USED) as total_credits,
@@ -476,8 +631,8 @@ SELECT
     COALESCE(AVG(DOCUMENT_COUNT), 0) as avg_documents_per_operation,
     COALESCE(AVG(PAGE_COUNT), 0) as avg_pages_per_operation,
     ROUND(100 * SUM(CREDITS_USED) / NULLIF((
-        SELECT SUM(CREDITS_USED) 
-        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY 
+        SELECT SUM(CREDITS_USED)
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
         WHERE START_TIME >= $start_date::date
             AND START_TIME < $end_date::date + INTERVAL '1 day'
     ), 0), 2) as pct_of_total_credits,
@@ -493,14 +648,14 @@ WHERE START_TIME >= $start_date::date
 -- =============================================================================
 -- Purpose: Detailed analysis of Cortex Search usage (vector search operations)
 
-SELECT 
+SELECT
     '2e. CORTEX SEARCH ANALYSIS' as analysis_type,
     COUNT(*) as total_operations,
     SUM(CREDITS) as total_credits,
     AVG(CREDITS) as avg_credits_per_operation,
     ROUND(100 * SUM(CREDITS) / NULLIF((
-        SELECT SUM(CREDITS) 
-        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY 
+        SELECT SUM(CREDITS)
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
         WHERE START_TIME >= $start_date::date
             AND START_TIME < $end_date::date + INTERVAL '1 day'
     ), 0), 2) as pct_of_total_credits,
@@ -522,11 +677,7 @@ WITH daily_time_series AS (
     SELECT
         DATE_TRUNC('day', usage_time) as period,
         CASE
-            WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
-                CASE
-                    WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
-                    ELSE 'Other Specialized'
-                END
+            WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other Specialized'
             WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
             WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
             WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
@@ -544,24 +695,7 @@ WITH daily_time_series AS (
     WHERE usage_time >= $start_date::date
       AND usage_time < $end_date::date + INTERVAL '1 day'
       AND (MODEL_NAME IS NULL OR MODEL_NAME = '')  -- Only specialized functions
-    GROUP BY DATE_TRUNC('day', usage_time),
-        CASE
-            WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
-                CASE
-                    WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
-                    ELSE 'Other Specialized'
-                END
-            WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
-            WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
-            WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
-            WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'SUMMARIZE'
-            WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
-            WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
-            WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
-            WHEN FUNCTION_NAME = 'AI_AGG' THEN 'AI_AGG'
-            WHEN FUNCTION_NAME = 'AI_CLASSIFY' THEN 'AI_CLASSIFY'
-            ELSE 'Other Specialized'
-        END
+    GROUP BY 1, 2
 
     UNION ALL
 
@@ -583,21 +717,38 @@ WITH daily_time_series AS (
     WHERE usage_time >= $start_date::date
       AND usage_time < $end_date::date + INTERVAL '1 day'
       AND (MODEL_NAME IS NOT NULL AND MODEL_NAME != '')  -- Only explicit model functions
-    GROUP BY DATE_TRUNC('day', usage_time),
-        CASE
-            WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
-            WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
-            WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
-            WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT_EXPLICIT'
-            WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
-            WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
-            ELSE 'Other Explicit'
-        END
-    
+    GROUP BY 1, 2
+
     UNION ALL
-    
+
+    -- Cortex Code CLI
+    SELECT
+        DATE_TRUNC('day', usage_time) as period,
+        'CORTEX_CODE_CLI' as service_type,
+        SUM(COALESCE(token_credits, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+    WHERE usage_time >= $start_date::date
+      AND usage_time < $end_date::date + INTERVAL '1 day'
+    GROUP BY 1
+
+    UNION ALL
+
+    -- Cortex Code Snowsight
+    SELECT
+        DATE_TRUNC('day', usage_time) as period,
+        'CORTEX_CODE_SNOWSIGHT' as service_type,
+        SUM(COALESCE(token_credits, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+    WHERE usage_time >= $start_date::date
+      AND usage_time < $end_date::date + INTERVAL '1 day'
+    GROUP BY 1
+
+    UNION ALL
+
     -- Cortex Analyst
-    SELECT 
+    SELECT
         DATE_TRUNC('day', start_time) as period,
         'CORTEX_ANALYST' as service_type,
         SUM(COALESCE(credits, 0)) as credits,
@@ -605,59 +756,7 @@ WITH daily_time_series AS (
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
-    
-    UNION ALL
-    
-    -- Document AI
-    SELECT 
-        DATE_TRUNC('day', start_time) as period,
-        'DOCUMENT_AI' as service_type,
-        SUM(COALESCE(credits_used, 0)) as credits,
-        COUNT(*) as operation_count
-    FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
-    
-    UNION ALL
-    
-    -- Cortex Search Serving
-    SELECT 
-        DATE_TRUNC('day', start_time) as period,
-        'CORTEX_SEARCH_SERVING' as service_type,
-        SUM(COALESCE(credits, 0)) as credits,
-        COUNT(*) as operation_count
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
-    
-    UNION ALL
-    
-    -- Cortex Fine Tuning
-    SELECT 
-        DATE_TRUNC('day', start_time) as period,
-        'CORTEX_FINE_TUNING' as service_type,
-        SUM(COALESCE(token_credits, 0)) as credits,
-        COUNT(*) as operation_count
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
-    
-    UNION ALL
-    
-    -- Cortex Document Processing
-    SELECT
-        DATE_TRUNC('day', start_time) as period,
-        'CORTEX_DOCUMENT_PROCESSING' as service_type,
-        SUM(COALESCE(credits_used, 0)) as credits,
-        COUNT(*) as operation_count
-    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
-    WHERE start_time >= $start_date::date
-      AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
+    GROUP BY 1
 
     UNION ALL
 
@@ -670,7 +769,7 @@ WITH daily_time_series AS (
     FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
+    GROUP BY 1
 
     UNION ALL
 
@@ -683,10 +782,90 @@ WITH daily_time_series AS (
     FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
     WHERE start_time >= $start_date::date
       AND start_time < $end_date::date + INTERVAL '1 day'
-    GROUP BY DATE_TRUNC('day', start_time)
+    GROUP BY 1
+
+    UNION ALL
+
+    -- Document AI
+    SELECT
+        DATE_TRUNC('day', start_time) as period,
+        'DOCUMENT_AI' as service_type,
+        SUM(COALESCE(credits_used, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+    GROUP BY 1
+
+    UNION ALL
+
+    -- Cortex Search Serving
+    SELECT
+        DATE_TRUNC('day', start_time) as period,
+        'CORTEX_SEARCH_SERVING' as service_type,
+        SUM(COALESCE(credits, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+    GROUP BY 1
+
+    UNION ALL
+
+    -- Cortex Search Daily (USAGE_DATE — truncate to day directly)
+    SELECT
+        usage_date::TIMESTAMP_NTZ as period,
+        'CORTEX_SEARCH_DAILY' as service_type,
+        SUM(COALESCE(credits, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_DAILY_USAGE_HISTORY
+    WHERE usage_date >= $start_date::date
+      AND usage_date <= $end_date::date
+    GROUP BY 1
+
+    UNION ALL
+
+    -- Cortex Search Batch Queries
+    SELECT
+        DATE_TRUNC('day', start_time) as period,
+        'CORTEX_SEARCH_BATCH_QUERY' as service_type,
+        SUM(COALESCE(credits_used, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_BATCH_QUERY_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+    GROUP BY 1
+
+    UNION ALL
+
+    -- Cortex Fine Tuning
+    SELECT
+        DATE_TRUNC('day', start_time) as period,
+        'CORTEX_FINE_TUNING' as service_type,
+        SUM(COALESCE(token_credits, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
+    WHERE start_time >= $start_date::date
+      AND start_time < $end_date::date + INTERVAL '1 day'
+    GROUP BY 1
+
+    UNION ALL
+
+    -- Cortex Provisioned Throughput (uses INTERVAL_START_TIME)
+    SELECT
+        DATE_TRUNC('day', interval_start_time) as period,
+        'CORTEX_PROVISIONED_THROUGHPUT' as service_type,
+        SUM(COALESCE(ptu_credits, 0)) as credits,
+        COUNT(*) as operation_count
+    FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_PROVISIONED_THROUGHPUT_USAGE_HISTORY
+    WHERE interval_start_time >= $start_date::date
+      AND interval_start_time < $end_date::date + INTERVAL '1 day'
+    GROUP BY 1
+
+    -- NOTE: CORTEX_DOCUMENT_PROCESSING excluded (FALLBACK — billing change Nov 2025)
 ),
 daily_totals AS (
-    SELECT 
+    SELECT
         period,
         SUM(credits) as total_daily_credits,
         SUM(operation_count) as total_daily_operations
@@ -694,7 +873,7 @@ daily_totals AS (
     GROUP BY period
 ),
 peak_analysis AS (
-    SELECT 
+    SELECT
         period,
         total_daily_credits,
         total_daily_operations,
@@ -702,7 +881,7 @@ peak_analysis AS (
         RANK() OVER (ORDER BY total_daily_operations DESC) as operation_rank
     FROM daily_totals
 )
-SELECT 
+SELECT
     '4. DAILY TIME SERIES' as analysis_type,
     dts.period,
     dts.service_type,
@@ -711,23 +890,21 @@ SELECT
     dt.total_daily_credits,
     dt.total_daily_operations,
     ROUND(100 * dts.credits / NULLIF(dt.total_daily_credits, 0), 2) as pct_of_daily_credits,
-    -- Peak indicators
     CASE WHEN pa.credit_rank = 1 THEN 'PEAK_CREDIT_DAY' ELSE NULL END as peak_credit_indicator,
     CASE WHEN pa.operation_rank = 1 THEN 'PEAK_OPERATION_DAY' ELSE NULL END as peak_operation_indicator
 FROM daily_time_series dts
 JOIN daily_totals dt ON dts.period = dt.period
 JOIN peak_analysis pa ON dts.period = pa.period
-WHERE dts.credits > 0  -- Only show periods with actual usage
+WHERE dts.credits > 0
 ORDER BY dts.period DESC, dts.credits DESC;
 
 -- =============================================================================
 -- 5. DETAILED RAW DATA EXPORT (LIMITED TO 1000 RECORDS)
 -- =============================================================================
 -- Purpose: Provide granular transaction-level data for deep analysis
--- Note: Limited to records for performance - adjust as needed
 -- Matches get_raw_export_data() from data_layer.py
 
--- Cortex AI SQL Usage (replaces deprecated CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY)
+-- 5a. Cortex AI SQL Usage
 SELECT
     '5a. RAW DATA - CORTEX_AISQL' as analysis_type,
     usage_time,
@@ -736,7 +913,6 @@ SELECT
     tokens,
     token_credits,
     username,
-    -- Unified credit column
     token_credits as total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
 WHERE usage_time >= $start_date::date
@@ -744,15 +920,14 @@ WHERE usage_time >= $start_date::date
 ORDER BY usage_time DESC
 LIMIT 500;
 
--- Cortex Analyst Usage
-SELECT 
+-- 5b. Cortex Analyst Usage
+SELECT
     '5b. RAW DATA - CORTEX_ANALYST' as analysis_type,
     start_time,
     end_time,
     username,
     credits,
     request_count,
-    -- Unified credit column
     credits as total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
 WHERE start_time >= $start_date::date
@@ -760,8 +935,8 @@ WHERE start_time >= $start_date::date
 ORDER BY start_time DESC
 LIMIT 200;
 
--- Document AI Usage
-SELECT 
+-- 5c. Document AI Usage
+SELECT
     '5c. RAW DATA - DOCUMENT_AI' as analysis_type,
     start_time,
     credits_used,
@@ -769,7 +944,6 @@ SELECT
     page_count,
     document_count,
     feature_count,
-    -- Unified credit column
     credits_used as total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
 WHERE start_time >= $start_date::date
@@ -777,8 +951,8 @@ WHERE start_time >= $start_date::date
 ORDER BY start_time DESC
 LIMIT 100;
 
--- Cortex Search Serving Usage
-SELECT 
+-- 5d. Cortex Search Serving Usage
+SELECT
     '5d. RAW DATA - CORTEX_SEARCH_SERVING' as analysis_type,
     start_time,
     end_time,
@@ -787,7 +961,6 @@ SELECT
     service_name,
     service_id,
     credits,
-    -- Unified credit column
     credits as total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
 WHERE start_time >= $start_date::date
@@ -795,15 +968,14 @@ WHERE start_time >= $start_date::date
 ORDER BY start_time DESC
 LIMIT 100;
 
--- Cortex Document Processing Usage
-SELECT 
-    '5e. RAW DATA - CORTEX_DOCUMENT_PROCESSING' as analysis_type,
+-- 5e. Cortex Document Processing Usage (FALLBACK — may return 0 rows post-Nov 2025)
+SELECT
+    '5e. RAW DATA - CORTEX_DOCUMENT_PROCESSING (FALLBACK)' as analysis_type,
     start_time,
     credits_used,
     operation_name,
     page_count,
     document_count,
-    -- Unified credit column
     credits_used as total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_DOCUMENT_PROCESSING_USAGE_HISTORY
 WHERE start_time >= $start_date::date
@@ -811,7 +983,7 @@ WHERE start_time >= $start_date::date
 ORDER BY start_time DESC
 LIMIT 100;
 
--- Cortex Agents Usage (GA Feb 25 2026)
+-- 5f. Cortex Agents Usage (GA Feb 25 2026)
 SELECT
     '5f. RAW DATA - CORTEX_AGENT' as analysis_type,
     start_time,
@@ -819,7 +991,6 @@ SELECT
     agent_database_name,
     agent_schema_name,
     token_credits,
-    -- Unified credit column
     token_credits as total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
 WHERE start_time >= $start_date::date
@@ -827,21 +998,94 @@ WHERE start_time >= $start_date::date
 ORDER BY start_time DESC
 LIMIT 100;
 
--- Snowflake Intelligence Usage (GA Feb 25 2026)
+-- 5g. Snowflake Intelligence Usage (GA Feb 25 2026)
 SELECT
     '5g. RAW DATA - SNOWFLAKE_INTELLIGENCE' as analysis_type,
     start_time,
     snowflake_intelligence_name,
     token_credits,
-    -- Unified credit column
     token_credits as total_credits
 FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
 WHERE start_time >= $start_date::date
     AND start_time <= $end_date::date
 ORDER BY start_time DESC
 LIMIT 100;
+
+-- 5h. Cortex Code CLI Usage
+SELECT
+    '5h. RAW DATA - CORTEX_CODE_CLI' as analysis_type,
+    usage_time,
+    username,
+    token_credits,
+    token_credits as total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+WHERE usage_time >= $start_date::date
+    AND usage_time <= $end_date::date
+ORDER BY usage_time DESC
+LIMIT 200;
+
+-- 5i. Cortex Code Snowsight Usage
+SELECT
+    '5i. RAW DATA - CORTEX_CODE_SNOWSIGHT' as analysis_type,
+    usage_time,
+    username,
+    token_credits,
+    token_credits as total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+WHERE usage_time >= $start_date::date
+    AND usage_time <= $end_date::date
+ORDER BY usage_time DESC
+LIMIT 200;
+
+-- 5j. Cortex Search Daily Usage (USAGE_DATE — index build/refresh charges)
+SELECT
+    '5j. RAW DATA - CORTEX_SEARCH_DAILY' as analysis_type,
+    usage_date,
+    service_name,
+    database_name,
+    schema_name,
+    credits,
+    credits as total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_DAILY_USAGE_HISTORY
+WHERE usage_date >= $start_date::date
+    AND usage_date <= $end_date::date
+ORDER BY usage_date DESC
+LIMIT 200;
+
+-- 5k. Cortex Search Batch Query Usage
+SELECT
+    '5k. RAW DATA - CORTEX_SEARCH_BATCH_QUERY' as analysis_type,
+    start_time,
+    end_time,
+    service_name,
+    database_name,
+    schema_name,
+    credits_used,
+    credits_used as total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_BATCH_QUERY_USAGE_HISTORY
+WHERE start_time >= $start_date::date
+    AND start_time <= $end_date::date
+ORDER BY start_time DESC
+LIMIT 100;
+
+-- 5l. Cortex Provisioned Throughput Usage
+SELECT
+    '5l. RAW DATA - CORTEX_PROVISIONED_THROUGHPUT' as analysis_type,
+    interval_start_time,
+    interval_end_time,
+    model_name,
+    ptu_credits,
+    ptu_credits as total_credits
+FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_PROVISIONED_THROUGHPUT_USAGE_HISTORY
+WHERE interval_start_time >= $start_date::date
+    AND interval_start_time <= $end_date::date
+ORDER BY interval_start_time DESC
+LIMIT 100;
+
 -- =============================================================================
--- Purpose: High-level summary with actionable insights
+-- 6. SUMMARY INSIGHTS
+-- =============================================================================
+-- Purpose: High-level summary with actionable insights (CORTEX_AISQL focus)
 
 WITH summary_stats AS (
     SELECT
@@ -868,7 +1112,7 @@ cost_distribution AS (
     WHERE usage_time >= $start_date::date
       AND usage_time < $end_date::date + INTERVAL '1 day'
 )
-SELECT 
+SELECT
     '6. SUMMARY INSIGHTS' as analysis_type,
     ss.active_days,
     ss.total_llm_credits,
@@ -879,7 +1123,6 @@ SELECT
     ss.max_single_call_cost,
     ROUND(ss.total_llm_credits / NULLIF(ss.active_days, 0), 2) as avg_daily_cost,
     ROUND(ss.total_llm_credits / NULLIF(ss.total_llm_calls, 0), 4) as avg_cost_per_call,
-    -- Cost distribution insights
     ROUND(cd.low_cost_calls, 2) as low_cost_total,
     cd.low_cost_count,
     ROUND(cd.medium_cost_calls, 2) as medium_cost_total,
@@ -893,10 +1136,16 @@ CROSS JOIN cost_distribution cd;
 -- =============================================================================
 -- USAGE NOTES:
 -- =============================================================================
--- 1. Adjust the date range variables at the top of the script (lines 23-24)
+-- 1. Adjust the date range variables at the top of the script (lines ~25-26)
+--    For last 30 days: SET start_date = DATEADD('day', -30, CURRENT_DATE())::DATE::VARCHAR;
+--                      SET end_date   = CURRENT_DATE()::VARCHAR;
 -- 2. Run individual sections as needed for focused analysis
 -- 3. Export results to CSV for further analysis or reporting
 -- 4. Use analysis_type column to filter results by section
--- 5. Reconciliation variance should be ≤1% (EXCELLENT), ≤2% (GOOD), ≤5% (WARNING)
+-- 5. Reconciliation variance thresholds: EXCELLENT ≤1%, GOOD ≤2%, WARNING ≤5%
 -- 6. High-cost calls (>0.1 credits) may indicate optimization opportunities
+-- 7. CORTEX_AI_FUNCTIONS_USAGE_HISTORY is intentionally excluded from all sums —
+--    it is an exact duplicate of CORTEX_AISQL_USAGE_HISTORY.
+-- 8. CORTEX_REST_API_USAGE_HISTORY is billed in USD, not AI_SERVICES credits.
+--    It does not appear in METERING_HISTORY AI_SERVICES. Probe manually if needed.
 -- =============================================================================

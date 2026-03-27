@@ -1,0 +1,20 @@
+# config.toml — local connection config for standalone Streamlit development
+# Copy this file to config.toml and fill in your values.
+# config.toml is gitignored; this example file is safe to commit.
+#
+# Supported auth methods:
+#   JWT key-pair (recommended): set authenticator + private_key_file
+#   Password:                   set authenticator = "SNOWFLAKE" + password
+#   Browser SSO:                set authenticator = "externalbrowser"
+#
+# Only [connections.default] is used by the app.
+# database and schema are optional — all queries use fully-qualified SNOWFLAKE.ACCOUNT_USAGE names.
+
+[connections.default]
+account = "your-account-identifier"   # e.g. myorg-myaccount or xy12345.us-east-1
+user = "YOUR_USERNAME"
+role = "ACCOUNTADMIN"                  # needs SNOWFLAKE.ACCOUNT_USAGE privileges
+warehouse = "YOUR_WAREHOUSE"
+authenticator = "SNOWFLAKE_JWT"
+private_key_file = "~/.ssh/snowflake/keys/rsa_key.p8"   # path to unencrypted PEM private key
+# password = "..."                     # use instead of private_key_file for password auth

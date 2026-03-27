@@ -57,8 +57,10 @@ class SnowflakeDataLoader:
             pass
         
         # Service table registry — single source of truth for view names and credit columns.
-        # status: 'PRIMARY' (include in reconciliation sum) | 'FALLBACK' (query but warn, exclude from sum)
-        # probe_views() sets status at startup based on live account probe.
+        # status: 'PRIMARY'  — include in reconciliation sum and service breakdown
+        #         'FALLBACK'  — query for visibility but exclude from sum (known-broken views)
+        #         'EXCLUDED'  — never include in sum (duplicate of another PRIMARY view)
+        # probe_views() may downgrade PRIMARY/FALLBACK to UNAVAILABLE if the view errors.
         self.service_configs = {
             'CORTEX_AI_FUNCTIONS': {
                 'table': 'CORTEX_AI_FUNCTIONS_USAGE_HISTORY',
@@ -66,14 +68,31 @@ class SnowflakeDataLoader:
                 'time_column': 'START_TIME',
                 'granularity': 'Per-query AI function level',
                 'description': 'Cortex AI Functions (AI_COMPLETE, AI_EXTRACT, etc.)',
-                'status': 'PRIMARY',
+                'status': 'EXCLUDED',
+                'warning': 'Excluded from reconciliation sum — exact duplicate of CORTEX_AISQL_USAGE_HISTORY.',
             },
             'CORTEX_AISQL': {
                 'table': 'CORTEX_AISQL_USAGE_HISTORY',
                 'credit_column': 'TOKEN_CREDITS',
                 'time_column': 'USAGE_TIME',
                 'granularity': 'Per-query AI SQL level',
-                'description': 'Cortex AI SQL functions (replaces CORTEX_FUNCTIONS views)',
+                'description': 'Cortex AI SQL functions (excl. cortex_code_cli tagged rows)',
+                'status': 'PRIMARY',
+            },
+            'CORTEX_CODE_CLI': {
+                'table': 'CORTEX_CODE_CLI_USAGE_HISTORY',
+                'credit_column': 'TOKEN_CREDITS',
+                'time_column': 'USAGE_TIME',
+                'granularity': 'Per-session user level',
+                'description': 'Cortex Code CLI (terminal / VS Code extension)',
+                'status': 'PRIMARY',
+            },
+            'CORTEX_CODE_SNOWSIGHT': {
+                'table': 'CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY',
+                'credit_column': 'TOKEN_CREDITS',
+                'time_column': 'USAGE_TIME',
+                'granularity': 'Per-session Snowsight level',
+                'description': 'Cortex Code in Snowsight (rolling out 2026)',
                 'status': 'PRIMARY',
             },
             'CORTEX_ANALYST': {
@@ -106,6 +125,30 @@ class SnowflakeDataLoader:
                 'time_column': 'START_TIME',
                 'granularity': 'Training session level',
                 'description': 'Model fine-tuning operations',
+                'status': 'PRIMARY',
+            },
+            'CORTEX_SEARCH_DAILY': {
+                'table': 'CORTEX_SEARCH_DAILY_USAGE_HISTORY',
+                'credit_column': 'CREDITS',
+                'time_column': 'USAGE_DATE',
+                'granularity': 'Daily by service',
+                'description': 'Cortex Search index build/refresh (daily)',
+                'status': 'PRIMARY',
+            },
+            'CORTEX_SEARCH_BATCH_QUERY': {
+                'table': 'CORTEX_SEARCH_BATCH_QUERY_USAGE_HISTORY',
+                'credit_column': 'CREDITS_USED',
+                'time_column': 'START_TIME',
+                'granularity': 'Per-batch query level',
+                'description': 'Cortex Search batch queries',
+                'status': 'PRIMARY',
+            },
+            'CORTEX_PROVISIONED_THROUGHPUT': {
+                'table': 'CORTEX_PROVISIONED_THROUGHPUT_USAGE_HISTORY',
+                'credit_column': 'PTU_CREDITS',
+                'time_column': 'INTERVAL_START_TIME',
+                'granularity': 'Hourly interval level',
+                'description': 'Cortex Provisioned Throughput Units',
                 'status': 'PRIMARY',
             },
             'CORTEX_DOCUMENT_PROCESSING': {
@@ -161,13 +204,17 @@ class SnowflakeDataLoader:
                 time_col = config.get('time_column', 'START_TIME')
                 if time_col == 'USAGE_TIME':
                     where = "WHERE usage_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())"
+                elif time_col == 'USAGE_DATE':
+                    where = "WHERE usage_date >= DATEADD('day', -30, CURRENT_DATE())"
+                elif time_col == 'INTERVAL_START_TIME':
+                    where = "WHERE interval_start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())"
                 else:
                     where = "WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())"
                 self.session.sql(
                     f"SELECT COUNT(*) AS count FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']} {where} LIMIT 1"
                 ).collect()
-                # Only upgrade to PRIMARY if view was not already demoted to FALLBACK
-                if original_status != 'FALLBACK':
+                # Only upgrade to PRIMARY if view was not already demoted to FALLBACK or EXCLUDED
+                if original_status not in ('FALLBACK', 'EXCLUDED'):
                     config['status'] = 'PRIMARY'
                 # FALLBACK views stay FALLBACK even if they respond (known-broken)
             except Exception:
@@ -705,7 +752,7 @@ class SnowflakeDataLoader:
         try:
             query = f"""
             SELECT
-                USERNAME,
+                USER_ID,
                 COUNT(*)                         AS total_requests,
                 COALESCE(SUM(TOKEN_CREDITS), 0)  AS total_credits,
                 COALESCE(SUM(TOKENS), 0)         AS total_tokens,
@@ -714,7 +761,7 @@ class SnowflakeDataLoader:
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
             WHERE USAGE_TIME >= '{start_date}'::date
               AND USAGE_TIME <  '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY USERNAME
+            GROUP BY USER_ID
             ORDER BY total_credits DESC
             """
             result = self.session.sql(query).collect()
@@ -766,9 +813,13 @@ class SnowflakeDataLoader:
         for service_name in services_filter:
             if service_name not in self.service_configs:
                 continue
-                
+
             config = self.service_configs[service_name]
-            
+
+            # Skip views excluded from the primary sum (e.g. CORTEX_AI_FUNCTIONS duplicates AISQL)
+            if config.get('status') in ('EXCLUDED', 'UNAVAILABLE'):
+                continue
+
             try:
                 # Build time filter based on available time column
                 if config['time_column']:
@@ -776,6 +827,11 @@ class SnowflakeDataLoader:
                         time_filter = f"""
                         WHERE {config['time_column']} >= '{start_date}'::date
                           AND {config['time_column']} <= '{end_date}'::date
+                        """
+                    elif config['time_column'] == 'INTERVAL_START_TIME':
+                        time_filter = f"""
+                        WHERE {config['time_column']} >= '{start_date}'::date
+                          AND {config['time_column']} < '{end_date}'::date + INTERVAL '1 day'
                         """
                     else:
                         time_filter = f"""
@@ -852,15 +908,24 @@ class SnowflakeDataLoader:
                   AND service_type = 'AI_SERVICES'
             ),
             individual_services AS (
-                SELECT 'CORTEX_AI_FUNCTIONS' AS service,
-                       COALESCE(SUM(credits), 0) AS credits
-                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY
-                WHERE start_time >= '{start_date}'::date
-                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
-                UNION ALL
-                SELECT 'CORTEX_AISQL',
-                       COALESCE(SUM(token_credits), 0)
+                -- CORTEX_AI_FUNCTIONS excluded — exact duplicate of CORTEX_AISQL
+                -- CORTEX_AISQL: exclude rows tagged app:cortex_code_cli (also in CODE_CLI)
+                SELECT 'CORTEX_AISQL' AS service,
+                       COALESCE(SUM(token_credits), 0) AS credits
                 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+                WHERE usage_time >= '{start_date}'::date
+                  AND usage_time <  '{end_date}'::date + INTERVAL '1 day'
+                  AND NOT (query_tag LIKE '%cortex_code_cli%')
+                UNION ALL
+                SELECT 'CORTEX_CODE_CLI',
+                       COALESCE(SUM(token_credits), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+                WHERE usage_time >= '{start_date}'::date
+                  AND usage_time <  '{end_date}'::date + INTERVAL '1 day'
+                UNION ALL
+                SELECT 'CORTEX_CODE_SNOWSIGHT',
+                       COALESCE(SUM(token_credits), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
                 WHERE usage_time >= '{start_date}'::date
                   AND usage_time <  '{end_date}'::date + INTERVAL '1 day'
                 UNION ALL
@@ -882,15 +947,32 @@ class SnowflakeDataLoader:
                 WHERE start_time >= '{start_date}'::date
                   AND start_time <  '{end_date}'::date + INTERVAL '1 day'
                 UNION ALL
+                SELECT 'CORTEX_SEARCH_DAILY',
+                       COALESCE(SUM(credits), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_DAILY_USAGE_HISTORY
+                WHERE usage_date >= '{start_date}'::date
+                  AND usage_date <= '{end_date}'::date
+                UNION ALL
+                SELECT 'CORTEX_SEARCH_BATCH_QUERY',
+                       COALESCE(SUM(credits_used), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_BATCH_QUERY_USAGE_HISTORY
+                WHERE start_time >= '{start_date}'::date
+                  AND start_time <  '{end_date}'::date + INTERVAL '1 day'
+                UNION ALL
                 SELECT 'CORTEX_FINE_TUNING',
                        COALESCE(SUM(token_credits), 0)
                 FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
                 WHERE start_time >= '{start_date}'::date
                   AND start_time <  '{end_date}'::date + INTERVAL '1 day'
                 UNION ALL
-                -- CORTEX_DOCUMENT_PROCESSING is FALLBACK (broken) — 0 credits in primary sum
-                SELECT 'CORTEX_DOCUMENT_PROCESSING',
-                       0 AS credits
+                SELECT 'CORTEX_PROVISIONED_THROUGHPUT',
+                       COALESCE(SUM(ptu_credits), 0)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_PROVISIONED_THROUGHPUT_USAGE_HISTORY
+                WHERE interval_start_time >= '{start_date}'::date
+                  AND interval_start_time <  '{end_date}'::date + INTERVAL '1 day'
+                UNION ALL
+                -- CORTEX_DOCUMENT_PROCESSING is FALLBACK (broken post-Nov 2025) — 0 in primary sum
+                SELECT 'CORTEX_DOCUMENT_PROCESSING', 0 AS credits
                 UNION ALL
                 SELECT 'CORTEX_AGENT',
                        COALESCE(SUM(token_credits), 0)
@@ -910,29 +992,37 @@ class SnowflakeDataLoader:
             ),
             summary AS (
                 SELECT
-                    b.total_credits                                                              AS ai_services_baseline,
+                    b.total_credits                                                                       AS ai_services_baseline,
                     st.total_individual,
-                    MAX(CASE WHEN st.service = 'CORTEX_AI_FUNCTIONS'        THEN st.credits END) AS cortex_ai_functions,
-                    MAX(CASE WHEN st.service = 'CORTEX_AISQL'               THEN st.credits END) AS cortex_aisql,
-                    MAX(CASE WHEN st.service = 'CORTEX_ANALYST'             THEN st.credits END) AS cortex_analyst,
-                    MAX(CASE WHEN st.service = 'DOCUMENT_AI'                THEN st.credits END) AS document_ai,
-                    MAX(CASE WHEN st.service = 'CORTEX_SEARCH_SERVING'      THEN st.credits END) AS cortex_search_serving,
-                    MAX(CASE WHEN st.service = 'CORTEX_FINE_TUNING'         THEN st.credits END) AS cortex_fine_tuning,
-                    MAX(CASE WHEN st.service = 'CORTEX_DOCUMENT_PROCESSING' THEN st.credits END) AS cortex_document_processing,
-                    MAX(CASE WHEN st.service = 'CORTEX_AGENT'               THEN st.credits END) AS cortex_agent,
-                    MAX(CASE WHEN st.service = 'SNOWFLAKE_INTELLIGENCE'     THEN st.credits END) AS snowflake_intelligence
+                    MAX(CASE WHEN st.service = 'CORTEX_AISQL'                THEN st.credits END)        AS cortex_aisql,
+                    MAX(CASE WHEN st.service = 'CORTEX_CODE_CLI'             THEN st.credits END)        AS cortex_code_cli,
+                    MAX(CASE WHEN st.service = 'CORTEX_CODE_SNOWSIGHT'       THEN st.credits END)        AS cortex_code_snowsight,
+                    MAX(CASE WHEN st.service = 'CORTEX_ANALYST'              THEN st.credits END)        AS cortex_analyst,
+                    MAX(CASE WHEN st.service = 'DOCUMENT_AI'                 THEN st.credits END)        AS document_ai,
+                    MAX(CASE WHEN st.service = 'CORTEX_SEARCH_SERVING'       THEN st.credits END)        AS cortex_search_serving,
+                    MAX(CASE WHEN st.service = 'CORTEX_SEARCH_DAILY'         THEN st.credits END)        AS cortex_search_daily,
+                    MAX(CASE WHEN st.service = 'CORTEX_SEARCH_BATCH_QUERY'   THEN st.credits END)        AS cortex_search_batch_query,
+                    MAX(CASE WHEN st.service = 'CORTEX_FINE_TUNING'          THEN st.credits END)        AS cortex_fine_tuning,
+                    MAX(CASE WHEN st.service = 'CORTEX_PROVISIONED_THROUGHPUT' THEN st.credits END)      AS cortex_provisioned_throughput,
+                    MAX(CASE WHEN st.service = 'CORTEX_DOCUMENT_PROCESSING'  THEN st.credits END)        AS cortex_document_processing,
+                    MAX(CASE WHEN st.service = 'CORTEX_AGENT'                THEN st.credits END)        AS cortex_agent,
+                    MAX(CASE WHEN st.service = 'SNOWFLAKE_INTELLIGENCE'      THEN st.credits END)        AS snowflake_intelligence
                 FROM ai_baseline b CROSS JOIN service_totals st
                 GROUP BY b.total_credits, st.total_individual
             )
             SELECT
                 ai_services_baseline,
                 total_individual,
-                cortex_ai_functions,
                 cortex_aisql,
+                cortex_code_cli,
+                cortex_code_snowsight,
                 cortex_analyst,
                 document_ai,
                 cortex_search_serving,
+                cortex_search_daily,
+                cortex_search_batch_query,
                 cortex_fine_tuning,
+                cortex_provisioned_throughput,
                 cortex_document_processing,
                 cortex_agent,
                 snowflake_intelligence,
@@ -944,15 +1034,19 @@ class SnowflakeDataLoader:
             if result:
                 row = result[0].asDict() if hasattr(result[0], 'asDict') else dict(result[0])
                 service_breakdown = {
-                    'CORTEX_AI_FUNCTIONS':        float(row.get('CORTEX_AI_FUNCTIONS', 0) or 0),
-                    'CORTEX_AISQL':               float(row.get('CORTEX_AISQL', 0) or 0),
-                    'CORTEX_ANALYST':             float(row.get('CORTEX_ANALYST', 0) or 0),
-                    'DOCUMENT_AI':                float(row.get('DOCUMENT_AI', 0) or 0),
-                    'CORTEX_SEARCH_SERVING':      float(row.get('CORTEX_SEARCH_SERVING', 0) or 0),
-                    'CORTEX_FINE_TUNING':         float(row.get('CORTEX_FINE_TUNING', 0) or 0),
-                    'CORTEX_DOCUMENT_PROCESSING': float(row.get('CORTEX_DOCUMENT_PROCESSING', 0) or 0),
-                    'CORTEX_AGENT':               float(row.get('CORTEX_AGENT', 0) or 0),
-                    'SNOWFLAKE_INTELLIGENCE':     float(row.get('SNOWFLAKE_INTELLIGENCE', 0) or 0),
+                    'CORTEX_AISQL':                  float(row.get('CORTEX_AISQL', 0) or 0),
+                    'CORTEX_CODE_CLI':               float(row.get('CORTEX_CODE_CLI', 0) or 0),
+                    'CORTEX_CODE_SNOWSIGHT':         float(row.get('CORTEX_CODE_SNOWSIGHT', 0) or 0),
+                    'CORTEX_ANALYST':                float(row.get('CORTEX_ANALYST', 0) or 0),
+                    'DOCUMENT_AI':                   float(row.get('DOCUMENT_AI', 0) or 0),
+                    'CORTEX_SEARCH_SERVING':         float(row.get('CORTEX_SEARCH_SERVING', 0) or 0),
+                    'CORTEX_SEARCH_DAILY':           float(row.get('CORTEX_SEARCH_DAILY', 0) or 0),
+                    'CORTEX_SEARCH_BATCH_QUERY':     float(row.get('CORTEX_SEARCH_BATCH_QUERY', 0) or 0),
+                    'CORTEX_FINE_TUNING':            float(row.get('CORTEX_FINE_TUNING', 0) or 0),
+                    'CORTEX_PROVISIONED_THROUGHPUT': float(row.get('CORTEX_PROVISIONED_THROUGHPUT', 0) or 0),
+                    'CORTEX_DOCUMENT_PROCESSING':    float(row.get('CORTEX_DOCUMENT_PROCESSING', 0) or 0),
+                    'CORTEX_AGENT':                  float(row.get('CORTEX_AGENT', 0) or 0),
+                    'SNOWFLAKE_INTELLIGENCE':        float(row.get('SNOWFLAKE_INTELLIGENCE', 0) or 0),
                 }
                 variance_pct = float(row.get('VARIANCE_PCT', 0) or 0)
                 return {
@@ -1095,22 +1189,15 @@ class SnowflakeDataLoader:
         Expected 65% performance improvement over sequential queries.
         TESTED: This query works correctly via Snowflake CLI.
         """
-        if granularity == 'daily':
-            date_trunc = "DATE_TRUNC('day', start_time)"
-        else:
-            date_trunc = "DATE_TRUNC('hour', start_time)"
-        
+        trunc = "day" if granularity == 'daily' else "hour"
+
         query = f"""
         WITH all_time_series AS (
             -- Specialized Functions (individual breakdown)
-            SELECT 
-                {date_trunc} as period,
-                CASE 
-                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
-                        CASE 
-                            WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
-                            ELSE 'Other Specialized'
-                        END
+            SELECT
+                DATE_TRUNC('{trunc}', usage_time)::TIMESTAMP_NTZ as period,
+                CASE
+                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN 'Other Specialized'
                     WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
                     WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
                     WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
@@ -1126,32 +1213,15 @@ class SnowflakeDataLoader:
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
             WHERE usage_time >= '{start_date}'::date
               AND usage_time < '{end_date}'::date + INTERVAL '1 day'
-              AND (MODEL_NAME IS NULL OR MODEL_NAME = '')  -- Only specialized functions
-            GROUP BY {date_trunc}, 
-                CASE 
-                    WHEN FUNCTION_NAME IS NULL OR FUNCTION_NAME = '' THEN
-                        CASE 
-                            WHEN MODEL_NAME IS NULL OR MODEL_NAME = '' THEN 'Other Specialized'
-                            ELSE 'Other Specialized'
-                        END
-                    WHEN FUNCTION_NAME = 'TRANSLATE' THEN 'TRANSLATE'
-                    WHEN FUNCTION_NAME = 'CLASSIFY_TEXT' THEN 'CLASSIFY_TEXT'
-                    WHEN FUNCTION_NAME = 'SENTIMENT' THEN 'SENTIMENT'
-                    WHEN FUNCTION_NAME = 'SUMMARIZE' THEN 'SUMMARIZE'
-                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT'
-                    WHEN FUNCTION_NAME = 'EXTRACT_ANSWER' THEN 'EXTRACT_ANSWER'
-                    WHEN FUNCTION_NAME = 'AI_EXTRACT' THEN 'AI_EXTRACT'
-                    WHEN FUNCTION_NAME = 'AI_AGG' THEN 'AI_AGG'
-                    WHEN FUNCTION_NAME = 'AI_CLASSIFY' THEN 'AI_CLASSIFY'
-                    ELSE 'Other Specialized'
-                END
-            
+              AND (MODEL_NAME IS NULL OR MODEL_NAME = '')
+            GROUP BY 1, 2
+
             UNION ALL
-            
+
             -- Explicit Model Functions (individual breakdown)
-            SELECT 
-                {date_trunc} as period,
-                CASE 
+            SELECT
+                DATE_TRUNC('{trunc}', usage_time)::TIMESTAMP_NTZ as period,
+                CASE
                     WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
                     WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
                     WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
@@ -1164,72 +1234,147 @@ class SnowflakeDataLoader:
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
             WHERE usage_time >= '{start_date}'::date
               AND usage_time < '{end_date}'::date + INTERVAL '1 day'
-              AND (MODEL_NAME IS NOT NULL AND MODEL_NAME != '')  -- Only explicit model functions
-            GROUP BY {date_trunc}, 
-                CASE 
-                    WHEN FUNCTION_NAME = 'COMPLETE' THEN 'COMPLETE'
-                    WHEN FUNCTION_NAME = 'EMBED_TEXT_768' THEN 'EMBED_TEXT_768'
-                    WHEN FUNCTION_NAME = 'EMBED_TEXT_1024' THEN 'EMBED_TEXT_1024'
-                    WHEN FUNCTION_NAME = 'EMBED_TEXT' THEN 'EMBED_TEXT_EXPLICIT'
-                    WHEN FUNCTION_NAME = 'FINETUNE' THEN 'FINETUNE'
-                    WHEN FUNCTION_NAME = 'COUNT_TOKENS' THEN 'COUNT_TOKENS'
-                    ELSE 'Other Explicit'
-                END
-            
+              AND (MODEL_NAME IS NOT NULL AND MODEL_NAME != '')
+            GROUP BY 1, 2
+
             UNION ALL
-            
+
+            -- Cortex Code CLI (usage_time)
+            SELECT
+                DATE_TRUNC('{trunc}', usage_time)::TIMESTAMP_NTZ as period,
+                'CORTEX_CODE_CLI' as service_type,
+                SUM(COALESCE(token_credits, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+            WHERE usage_time >= '{start_date}'::date
+              AND usage_time < '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY 1
+
+            UNION ALL
+
+            -- Cortex Code Snowsight (usage_time)
+            SELECT
+                DATE_TRUNC('{trunc}', usage_time)::TIMESTAMP_NTZ as period,
+                'CORTEX_CODE_SNOWSIGHT' as service_type,
+                SUM(COALESCE(token_credits, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY
+            WHERE usage_time >= '{start_date}'::date
+              AND usage_time < '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY 1
+
+            UNION ALL
+
             -- Cortex Analyst
-            SELECT 
-                {date_trunc} as period,
+            SELECT
+                DATE_TRUNC('{trunc}', start_time)::TIMESTAMP_NTZ as period,
                 'CORTEX_ANALYST' as service_type,
                 SUM(COALESCE(credits, 0)) as credits
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
             WHERE start_time >= '{start_date}'::date
               AND start_time < '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY {date_trunc}
-            
+            GROUP BY 1
+
             UNION ALL
-            
+
+            -- Cortex Agent
+            SELECT
+                DATE_TRUNC('{trunc}', start_time)::TIMESTAMP_NTZ as period,
+                'CORTEX_AGENT' as service_type,
+                SUM(COALESCE(token_credits, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
+            WHERE start_time >= '{start_date}'::date
+              AND start_time < '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY 1
+
+            UNION ALL
+
+            -- Snowflake Intelligence
+            SELECT
+                DATE_TRUNC('{trunc}', start_time)::TIMESTAMP_NTZ as period,
+                'SNOWFLAKE_INTELLIGENCE' as service_type,
+                SUM(COALESCE(token_credits, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
+            WHERE start_time >= '{start_date}'::date
+              AND start_time < '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY 1
+
+            UNION ALL
+
             -- Document AI
-            SELECT 
-                {date_trunc} as period,
+            SELECT
+                DATE_TRUNC('{trunc}', start_time)::TIMESTAMP_NTZ as period,
                 'DOCUMENT_AI' as service_type,
                 SUM(COALESCE(credits_used, 0)) as credits
             FROM SNOWFLAKE.ACCOUNT_USAGE.DOCUMENT_AI_USAGE_HISTORY
             WHERE start_time >= '{start_date}'::date
               AND start_time < '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY {date_trunc}
-            
+            GROUP BY 1
+
             UNION ALL
-            
+
             -- Cortex Search Serving
-            SELECT 
-                {date_trunc} as period,
+            SELECT
+                DATE_TRUNC('{trunc}', start_time)::TIMESTAMP_NTZ as period,
                 'CORTEX_SEARCH_SERVING' as service_type,
                 SUM(COALESCE(credits, 0)) as credits
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
             WHERE start_time >= '{start_date}'::date
               AND start_time < '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY {date_trunc}
-            
+            GROUP BY 1
+
             UNION ALL
-            
+
+            -- Cortex Search Daily (usage_date — DATE column)
+            SELECT
+                usage_date::TIMESTAMP_NTZ as period,
+                'CORTEX_SEARCH_DAILY' as service_type,
+                SUM(COALESCE(credits, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_DAILY_USAGE_HISTORY
+            WHERE usage_date >= '{start_date}'::date
+              AND usage_date <= '{end_date}'::date
+            GROUP BY 1
+
+            UNION ALL
+
+            -- Cortex Search Batch Query
+            SELECT
+                DATE_TRUNC('{trunc}', start_time)::TIMESTAMP_NTZ as period,
+                'CORTEX_SEARCH_BATCH_QUERY' as service_type,
+                SUM(COALESCE(credits_used, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_BATCH_QUERY_USAGE_HISTORY
+            WHERE start_time >= '{start_date}'::date
+              AND start_time < '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY 1
+
+            UNION ALL
+
             -- Cortex Fine Tuning
-            SELECT 
-                {date_trunc} as period,
+            SELECT
+                DATE_TRUNC('{trunc}', start_time)::TIMESTAMP_NTZ as period,
                 'CORTEX_FINE_TUNING' as service_type,
                 SUM(COALESCE(token_credits, 0)) as credits
             FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_FINE_TUNING_USAGE_HISTORY
             WHERE start_time >= '{start_date}'::date
               AND start_time < '{end_date}'::date + INTERVAL '1 day'
-            GROUP BY {date_trunc}
+            GROUP BY 1
+
+            UNION ALL
+
+            -- Cortex Provisioned Throughput (interval_start_time)
+            SELECT
+                DATE_TRUNC('{trunc}', interval_start_time)::TIMESTAMP_NTZ as period,
+                'CORTEX_PROVISIONED_THROUGHPUT' as service_type,
+                SUM(COALESCE(ptu_credits, 0)) as credits
+            FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_PROVISIONED_THROUGHPUT_USAGE_HISTORY
+            WHERE interval_start_time >= '{start_date}'::date
+              AND interval_start_time < '{end_date}'::date + INTERVAL '1 day'
+            GROUP BY 1
         )
-        SELECT 
+        SELECT
             period,
             service_type,
             credits
         FROM all_time_series
-        WHERE credits > 0  -- Only show periods with actual usage
+        WHERE credits > 0
         ORDER BY period, service_type
         """
         
@@ -1255,6 +1400,10 @@ class SnowflakeDataLoader:
         
         for service_name, config in self.service_configs.items():
             try:
+                # Skip excluded views (e.g. CORTEX_AI_FUNCTIONS duplicates AISQL)
+                if config.get('status') in ('EXCLUDED', 'UNAVAILABLE'):
+                    continue
+
                 # Special handling for CORTEX_FUNCTIONS_QUERY with enhanced details
                 if service_name == 'CORTEX_FUNCTIONS_QUERY':
                     query = f"""
@@ -1355,41 +1504,49 @@ class SnowflakeDataLoader:
         else:
             return pd.DataFrame()
     
-    def get_data_freshness(self) -> Optional[timedelta]:
+    def get_data_freshness(self) -> Dict[str, int]:
         """
-        Check data freshness by looking at the most recent data across all services.
-        Returns time since most recent data point.
+        Check how far behind key granular views lag behind METERING_HISTORY.
+
+        Returns a dict of {service_name: lag_days} where lag_days is the number of
+        whole days the granular view's latest row lags behind METERING_HISTORY's latest
+        AI_SERVICES row.  A value of 0 means the view is current (within 24 h).
+        Services that cannot be queried are omitted from the result.
         """
         try:
-            most_recent = None
-            
-            for service_name, config in self.service_configs.items():
-                if not config['time_column']:
-                    continue
-                
-                try:
-                    query = f"""
-                    SELECT MAX({config['time_column']}) as latest_time
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.{config['table']}
-                    WHERE {config['credit_column']} > 0
-                    """
-                    
-                    result = self.session.sql(query).collect()
-                    if result and result[0]['LATEST_TIME']:
-                        service_latest = result[0]['LATEST_TIME']
-                        if most_recent is None or service_latest > most_recent:
-                            most_recent = service_latest
-                            
-                except Exception:
-                    continue
-            
-            if most_recent:
-                return datetime.now() - most_recent
-            else:
-                return None
-                
+            query = """
+            WITH metering_latest AS (
+                SELECT MAX(start_time) AS latest FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+                WHERE service_type = 'AI_SERVICES'
+            ),
+            granular_latest AS (
+                SELECT 'CORTEX_AGENT'              AS service, MAX(start_time) AS latest
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
+                UNION ALL
+                SELECT 'SNOWFLAKE_INTELLIGENCE',   MAX(start_time)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWFLAKE_INTELLIGENCE_USAGE_HISTORY
+                UNION ALL
+                SELECT 'CORTEX_AISQL',             MAX(usage_time)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AISQL_USAGE_HISTORY
+                UNION ALL
+                SELECT 'CORTEX_CODE_CLI',          MAX(usage_time)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_CODE_CLI_USAGE_HISTORY
+                UNION ALL
+                SELECT 'CORTEX_SEARCH_SERVING',    MAX(start_time)
+                FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_SEARCH_SERVING_USAGE_HISTORY
+            )
+            SELECT
+                g.service,
+                GREATEST(0, DATEDIFF('day', g.latest, m.latest)) AS lag_days
+            FROM granular_latest g
+            CROSS JOIN metering_latest m
+            WHERE g.latest IS NOT NULL
+            ORDER BY lag_days DESC
+            """
+            result = self.session.sql(query).collect()
+            return {row['SERVICE']: int(row['LAG_DAYS']) for row in result}
         except Exception:
-            return None
+            return {}
     
     def test_connectivity(self) -> Dict[str, Any]:
         """

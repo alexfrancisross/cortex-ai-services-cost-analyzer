@@ -1,3 +1,4 @@
+scripts/*
 output/
 docs/*
 !docs/superpowers/
@@ -7,6 +8,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 NTT/
+docs/
 
 # C extensions
 *.so
