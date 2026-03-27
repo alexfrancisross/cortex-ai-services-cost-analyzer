@@ -4,7 +4,7 @@ All notable changes to the Cortex AI Services Cost Analyzer are documented here.
 
 ---
 
-## [Unreleased] — 2026-03-26
+## [1.1.0] — 2026-03-27
 
 ### Summary
 

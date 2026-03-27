@@ -1,15 +1,15 @@
-scripts/*
+scripts/
 output/
-docs/*
-!docs/superpowers/
 archive/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+# NTT/ — vendor/customer-specific variant, not for public distribution
 NTT/
 docs/
-
+docs/superpowers/
+tests/
 # C extensions
 *.so
 
@@ -63,7 +63,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -194,6 +193,7 @@ Thumbs.db
 logs/
 
 # Configuration files with sensitive data
+# WARNING: config.toml contains real credentials — never `git add config.toml`
 config.toml
 secrets.json
 .secrets
@@ -210,4 +210,3 @@ credentials.json
 # Backup files
 *.bak
 *.backup
-output/
